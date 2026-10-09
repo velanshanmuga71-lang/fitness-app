@@ -73,6 +73,7 @@ const App = () => {
   const [view, setView] = useState('workout'); // 'workout' or 'dashboard'
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isPlansOpen, setIsPlansOpen] = useState(false);
+  const [isAccountSheetOpen, setIsAccountSheetOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
   useEffect(() => {
@@ -1991,6 +1992,130 @@ const App = () => {
         )}
       </AnimatePresence>
 
+      {/* Account Bottom Sheet for Mobile */}
+      <AnimatePresence>
+        {isAccountSheetOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="plans-sheet-overlay"
+              onClick={() => setIsAccountSheetOpen(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="plans-sheet account-bottom-sheet"
+            >
+              <div className="sheet-handle" />
+              <div className="sheet-header">
+                <h3>My Account</h3>
+                <button className="sheet-close" onClick={() => setIsAccountSheetOpen(false)}><X size={20} /></button>
+              </div>
+
+              <div className="account-sheet-content">
+                {currentUser ? (
+                  <>
+                    <div className="account-user-card-mobile">
+                      <div className="account-avatar-large">
+                        {currentUser.photoURL ? (
+                          <img src={currentUser.photoURL} alt={userProfile.name} />
+                        ) : (
+                          <span>{userProfile.name?.charAt(0) || 'A'}</span>
+                        )}
+                      </div>
+                      <div className="account-user-details">
+                        <h4>{userProfile.name}</h4>
+                        <p>{currentUser.email}</p>
+                        <span className={`cloud-sync-pill-mobile ${cloudStatus}`}>
+                          <Cloud size={12} /> {cloudStatus === 'synced' ? 'Cloud Synced' : cloudStatus === 'syncing' ? 'Syncing...' : 'Local Mode'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="account-stats-summary-grid">
+                      <div className="as-stat-item">
+                        <span className="as-stat-val">{userProfile.height} <small>cm</small></span>
+                        <span className="as-stat-label">Height</span>
+                      </div>
+                      <div className="as-stat-item">
+                        <span className="as-stat-val">{currentWeight} <small>kg</small></span>
+                        <span className="as-stat-label">Current</span>
+                      </div>
+                      <div className="as-stat-item">
+                        <span className="as-stat-val">{userProfile.goalWeight || 85} <small>kg</small></span>
+                        <span className="as-stat-label">Goal</span>
+                      </div>
+                      <div className="as-stat-item">
+                        <span className="as-stat-val">{userProfile.age || 22}</span>
+                        <span className="as-stat-label">Age</span>
+                      </div>
+                    </div>
+
+                    <div className="account-sheet-actions">
+                      <button
+                        className="btn-sheet-action primary"
+                        onClick={() => {
+                          setIsAccountSheetOpen(false);
+                          setOnboardingForm({
+                            name: userProfile.name || '',
+                            age: String(userProfile.age || 22),
+                            height: String(userProfile.height || 185),
+                            startingWeight: String(userProfile.startingWeight || 75),
+                            goalWeight: String(userProfile.goalWeight || 85)
+                          });
+                          setShowOnboarding(true);
+                        }}
+                      >
+                        <Sparkles size={16} /> Edit Athletic Profile
+                      </button>
+
+                      <div className="sheet-row-buttons">
+                        <button className="btn-sheet-action secondary" onClick={handleExportData}>
+                          <Download size={16} /> Export Backup
+                        </button>
+                        <label className="btn-sheet-action secondary" style={{ cursor: 'pointer', textAlign: 'center' }}>
+                          <Upload size={16} /> Import Backup
+                          <input type="file" accept=".json" onChange={handleImportData} style={{ display: 'none' }} />
+                        </label>
+                      </div>
+
+                      <button
+                        className="btn-sheet-action logout"
+                        onClick={() => {
+                          handleLogout();
+                          setIsAccountSheetOpen(false);
+                        }}
+                      >
+                        <LogOut size={16} /> Sign Out of V-FIT
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="account-logged-out-box">
+                    <p>Sign in to sync your workouts, actual reps, and weight across all devices.</p>
+                    <button
+                      className="btn-google-login"
+                      style={{ marginTop: '1rem' }}
+                      onClick={() => {
+                        setIsAccountSheetOpen(false);
+                        setShowAuthModal(true);
+                      }}
+                    >
+                      <LogIn size={16} color="var(--accent-primary)" />
+                      <span>Sign In / Create Account</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       <nav className="bottom-nav">
         <div className={`b-nav-item ${view === 'dashboard' ? 'active' : ''}`} onClick={() => { setView('dashboard'); setSelectedDashboardDate(todayDate); }}>
           <Home size={22} color={view === 'dashboard' ? 'var(--accent-secondary)' : 'var(--text-secondary)'} />
@@ -2003,6 +2128,23 @@ const App = () => {
         <div className={`b-nav-item ${isPlansOpen ? 'active' : ''}`} onClick={() => { setIsPlansOpen(true); }}>
           <LayoutGrid size={22} color={isPlansOpen ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
           <span>Plans</span>
+        </div>
+        <div 
+          className={`b-nav-item ${isAccountSheetOpen ? 'active' : ''}`} 
+          onClick={() => {
+            if (currentUser) {
+              setIsAccountSheetOpen(true);
+            } else {
+              setShowAuthModal(true);
+            }
+          }}
+        >
+          {currentUser && currentUser.photoURL ? (
+            <img src={currentUser.photoURL} alt="Profile" className="b-nav-avatar" />
+          ) : (
+            <User size={22} color={currentUser ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
+          )}
+          <span>{currentUser ? (userProfile.name?.split(' ')[0] || 'Profile') : 'Account'}</span>
         </div>
       </nav>
 
