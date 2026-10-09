@@ -5,6 +5,11 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(
+      process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''
+    )
+  },
   server: {
     host: true,
     https: true,

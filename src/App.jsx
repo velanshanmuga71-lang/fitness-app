@@ -355,7 +355,7 @@ const App = () => {
   });
   const [aiInputText, setAiInputText] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '').trim();
 
   const handleSendAiMessage = async (customPrompt) => {
     const textToSend = (customPrompt || aiInputText).trim();
@@ -387,7 +387,10 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
       try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-goog-api-key': geminiApiKey
+          },
           body: JSON.stringify({
             contents: [
               {
