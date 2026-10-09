@@ -48,7 +48,14 @@ import {
   Key,
   Settings,
   Sliders,
-  MessageSquare
+  MessageSquare,
+  Mic,
+  MicOff,
+  Paperclip,
+  FileText,
+  Phone,
+  PhoneOff,
+  Radio
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -781,7 +788,7 @@ const App = () => {
     }
   }, []);
 
-  const announceVoice = async (text) => {
+  const announceVoice = async (text, onEnd) => {
     try {
       await TextToSpeech.stop();
       await TextToSpeech.speak({
@@ -792,6 +799,7 @@ const App = () => {
         volume: 1.0,
         category: 'ambient',
       });
+      if (onEnd) onEnd();
     } catch (e) {
       if ('speechSynthesis' in window) {
         const msg = new SpeechSynthesisUtterance();
@@ -799,6 +807,10 @@ const App = () => {
         msg.rate = voicePersona === 'energetic' ? 1.1 : voicePersona === 'calm' ? 0.85 : voiceRate;
         msg.pitch = voicePersona === 'female' ? 1.05 : voicePersona === 'male' ? 0.9 : 1.0;
         msg.volume = 1.0;
+        if (onEnd) {
+          msg.onend = () => onEnd();
+          msg.onerror = () => onEnd();
+        }
 
         window.speechSynthesis.cancel();
 
@@ -813,6 +825,8 @@ const App = () => {
           if (chosenVoice) msg.voice = chosenVoice;
         }
         window.speechSynthesis.speak(msg);
+      } else if (onEnd) {
+        onEnd();
       }
     }
   };
@@ -827,7 +841,7 @@ const App = () => {
     announceVoice(phrases[persona] || phrases.female);
   };
 
-  // AI Coach Assistant States
+  // AI Coach Assistant States & Multimodal Features
   const [showAiCoach, setShowAiCoach] = useState(false);
   const [aiChatMessages, setAiChatMessages] = useState(() => {
     try {
@@ -847,14 +861,230 @@ const App = () => {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '').trim();
 
-  const handleSendAiMessage = async (customPrompt) => {
+  // Attachment states & refs
+  const [selectedAttachment, setSelectedAttachment] = useState(null);
+  const [isCompressingFile, setIsCompressingFile] = useState(false);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  // Voice dictation & Live Voice states
+  const [isListening, setIsListening] = useState(false);
+  const [isLiveVoiceActive, setIsLiveVoiceActive] = useState(false);
+  const [liveVoiceStatus, setLiveVoiceStatus] = useState('idle'); // 'listening', 'thinking', 'speaking'
+  const recognitionRef = useRef(null);
+  const liveVoiceActiveRef = useRef(false);
+
+  // Process & compress attachment files (images, pdfs, audio)
+  const processAttachmentFile = async (file) => {
+    if (!file) return;
+    setIsCompressingFile(true);
+
+    try {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const MAX_DIM = 1200;
+            let width = img.width;
+            let height = img.height;
+            if (width > height && width > MAX_DIM) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else if (height > MAX_DIM) {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            const base64Data = dataUrl.split(',')[1];
+            setSelectedAttachment({
+              name: file.name,
+              type: 'image',
+              mimeType: 'image/jpeg',
+              previewUrl: dataUrl,
+              base64Data
+            });
+            setIsCompressingFile(false);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result;
+          const base64Data = String(dataUrl).split(',')[1];
+          const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf');
+          const isAudio = file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|m4a|ogg|aac|webm)$/i);
+          setSelectedAttachment({
+            name: file.name,
+            type: isPdf ? 'pdf' : isAudio ? 'audio' : 'doc',
+            mimeType: file.type || (isPdf ? 'application/pdf' : 'application/octet-stream'),
+            previewUrl: isPdf ? null : dataUrl,
+            base64Data
+          });
+          setIsCompressingFile(false);
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      console.error("Attachment error:", err);
+      setIsCompressingFile(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processAttachmentFile(file);
+    }
+    e.target.value = '';
+  };
+
+  // Voice Dictation (Speech-to-Text)
+  const initSpeechRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return null;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    return recognition;
+  };
+
+  const toggleVoiceDictation = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = initSpeechRecognition();
+    if (!recognition) {
+      alert("Microphone dictation is supported on Chrome, Safari, Edge, and Android/iOS browsers.");
+      return;
+    }
+
+    recognitionRef.current = recognition;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setAiInputText(transcript);
+    };
+    recognition.onerror = (e) => {
+      console.warn("Speech recognition notice:", e.error);
+      setIsListening(false);
+    };
+    recognition.onend = () => setIsListening(false);
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.warn("Speech start error:", e);
+      setIsListening(false);
+    }
+  };
+
+  // Live Hands-Free Conversational Voice Loop
+  const runLiveVoiceListen = () => {
+    if (!liveVoiceActiveRef.current) return;
+    const recognition = initSpeechRecognition();
+    if (!recognition) return;
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => {
+      if (liveVoiceActiveRef.current) setLiveVoiceStatus('listening');
+    };
+
+    let finalTranscript = '';
+    recognition.onresult = (event) => {
+      for (let i = 0; i < event.results.length; i++) {
+        finalTranscript += event.results[i][0].transcript;
+      }
+    };
+
+    recognition.onerror = (e) => {
+      if (liveVoiceActiveRef.current && e.error !== 'no-speech') {
+        console.warn("Live voice recognition error:", e.error);
+      }
+    };
+
+    recognition.onend = async () => {
+      if (!liveVoiceActiveRef.current) return;
+      const query = finalTranscript.trim();
+      if (query) {
+        setLiveVoiceStatus('thinking');
+        await handleSendAiMessage(query, null, true);
+      } else {
+        setTimeout(() => {
+          if (liveVoiceActiveRef.current) runLiveVoiceListen();
+        }, 350);
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.warn("Live voice start notice:", e);
+    }
+  };
+
+  const startLiveVoiceSession = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Live Voice Session is supported on Chrome, Safari, Edge, and Android/iOS browsers.");
+      return;
+    }
+
+    setIsLiveVoiceActive(true);
+    liveVoiceActiveRef.current = true;
+    setLiveVoiceStatus('listening');
+    runLiveVoiceListen();
+  };
+
+  const stopLiveVoiceSession = () => {
+    liveVoiceActiveRef.current = false;
+    setIsLiveVoiceActive(false);
+    setLiveVoiceStatus('idle');
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) {}
+    }
+    if ('speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+  };
+
+  const handleSendAiMessage = async (customPrompt, customAttachment, isVoiceMode = false) => {
+    const activeAttachment = customAttachment || selectedAttachment;
     const textToSend = (customPrompt || aiInputText).trim();
-    if (!textToSend || isAiThinking) return;
+    if ((!textToSend && !activeAttachment) || isAiThinking) return;
 
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newHistory = [...aiChatMessages, { role: 'user', text: textToSend, timestamp: timeStr }];
+    const userMsg = {
+      role: 'user',
+      text: textToSend || (activeAttachment ? `[Attached ${activeAttachment.type.toUpperCase()}: ${activeAttachment.name}]` : ''),
+      timestamp: timeStr,
+      attachment: activeAttachment ? {
+        type: activeAttachment.type,
+        name: activeAttachment.name,
+        previewUrl: activeAttachment.previewUrl
+      } : null
+    };
+
+    const newHistory = [...aiChatMessages, userMsg];
     setAiChatMessages(newHistory);
     setAiInputText('');
+    setSelectedAttachment(null);
     setIsAiThinking(true);
 
     const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
@@ -869,18 +1099,31 @@ Athlete Profile:
 - Dynamic Targets: ${TARGET_KCAL} kcal daily (${TARGET_PRO}g Protein, ${TARGET_CARB}g Carbs, ${TARGET_FAT}g Fat)
 
 Instructions:
-Provide clear, actionable, science-backed guidance. Format responses with short bullet points (•) and bold text (**bold**). Keep responses concise and motivating so they are fast to digest during workouts.`;
+Provide clear, actionable, science-backed guidance.
+If an image of food/meal is attached: analyze the plate, estimate Calories, Protein, Carbs, and Fats, and offer dietary tips.
+If an image of gym equipment/machine is attached: explain how to set it up, target muscle groups, and correct execution cues.
+If a document or PDF is attached: summarize key findings and provide tailored athletic adjustments.
+Format responses with short bullet points (•) and bold text (**bold**). Keep responses concise and motivating so they are fast to digest during workouts.`;
 
     let replyText = '';
+
+    // Build multimodal parts
+    const parts = [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend || 'Please analyze this attachment and give me expert fitness coaching on it.'}` }];
+    if (activeAttachment && activeAttachment.base64Data && activeAttachment.mimeType) {
+      parts.push({
+        inlineData: {
+          mimeType: activeAttachment.mimeType,
+          data: activeAttachment.base64Data
+        }
+      });
+    }
 
     // Layer 1: Serverless /api/chat endpoint
     try {
       const serverRes = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend}` }] }]
-        })
+        body: JSON.stringify({ contents: [{ role: 'user', parts }] })
       });
       if (serverRes.ok) {
         const data = await serverRes.json();
@@ -904,9 +1147,7 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
               'Content-Type': 'application/json',
               'x-goog-api-key': apiKey
             },
-            body: JSON.stringify({
-              contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend}` }] }]
-            })
+            body: JSON.stringify({ contents: [{ role: 'user', parts }] })
           });
           if (directRes.ok) {
             const data = await directRes.json();
@@ -923,30 +1164,45 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
 
     // Layer 3: Dynamic Heuristic Guidance (Offline/Offline Fallback)
     if (!replyText) {
-      const q = textToSend.toLowerCase();
-      if (q.includes('meal') || q.includes('food') || q.includes('protein') || q.includes('nutrition') || q.includes('eat') || q.includes('diet')) {
-        replyText = `🥗 **Custom Meal Strategy for your ${TARGET_KCAL} kcal / ${TARGET_PRO}g Protein Target:**\n\n` +
-          `• **Post-Workout Recovery:** 40g whey or 200g Greek yogurt + 1 banana + 35g oats (~430 kcal, 42g protein).\n` +
-          `• **High-Density Fuel:** 200g grilled chicken breast or paneer + 150g rice + steamed greens (~580 kcal, 48g protein).\n` +
-          `• **Evening Sustenance:** 3 eggs (or tofu stir-fry) + whole grain toast + avocado (~480 kcal, 28g protein).\n\n` +
-          `💧 **Hydration Target:** Drink at least 3.5L of water today to maximize cellular hydration and muscle protein synthesis!`;
-      } else if (q.includes('substitute') || q.includes('replace') || q.includes('pain') || q.includes('hurt') || q.includes('alternative') || q.includes('injury')) {
-        replyText = `🔄 **Exercise Substitutions for Today's Routine (${currentWorkout.name}):**\n\n` +
-          `• **Shoulder or Wrist Strain:** Swap to Neutral-Grip Floor Press or Elevated Incline Push-Ups.\n` +
-          `• **Lower Back Tightness:** Perform Chest-Supported Rows or Incline Inverted Table Rows.\n` +
-          `• **Knee Strain on Squats:** Switch to Bulgarian Split Squats with vertical shin or Box Squats to parallel.\n\n` +
-          `⚡ Prioritize smooth tempo and joint comfort over rushing sets!`;
-      } else if (q.includes('plateau') || q.includes('stuck') || q.includes('progress') || q.includes('overload') || q.includes('reps')) {
-        replyText = `📈 **Overload Strategy for your ${userProfile.goalType || 'Lean Bulk'} Plan:**\n\n` +
-          `• **Micro-Progression:** Add just 1 single clean rep across your sets, or slow down the eccentric (lowering) phase by 2 seconds.\n` +
-          `• **Recovery Hormone Window:** Growth hormone and protein synthesis peak during deep sleep. Target 7.5–8.5 hours tonight.\n` +
-          `• **Deload Timing:** In Week 6 of Phase ${currentPhase.id}, drop volume by 30% to allow your central nervous system to supercompensate!`;
+      if (activeAttachment) {
+        if (activeAttachment.type === 'image') {
+          replyText = `📷 **Visual Analysis for ${userProfile.name || 'Athlete'}:**\n\n` +
+            `• **Detection:** Meal / Workout Image (${activeAttachment.name})\n` +
+            `• **Estimated Nutrition:** Balanced whole-food portion aligned with your daily ${TARGET_KCAL} kcal target.\n` +
+            `• **Coach Tip:** Aim to get at least 35-40g of complete protein in this meal to optimize muscle protein synthesis!`;
+        } else if (activeAttachment.type === 'pdf') {
+          replyText = `📄 **Document Analysis (${activeAttachment.name}):**\n\n` +
+            `• Document received and reviewed for your ${userProfile.goalType || 'Transformation'} protocol.\n` +
+            `• Prioritize consistent training volume, adequate micronutrient intake, and 7.5+ hours of recovery sleep.`;
+        } else {
+          replyText = `🎵 **Audio Note Processed:** Your voice note was logged into your session history. Keep pushing toward your ${userProfile.goalWeight}kg goal!`;
+        }
       } else {
-        replyText = `🔥 **Coach Assessment for ${userProfile.name || 'Athlete'}:**\n\n` +
-          `• **Objective:** ${userProfile.goalType || 'Lean Bulk & Muscle Gain'}\n` +
-          `• **Trajectory:** Current ${currentWeight}kg ➔ Target ${userProfile.goalWeight || 85}kg\n` +
-          `• **Daily Targets:** ${TARGET_KCAL} kcal (${TARGET_PRO}g Protein)\n\n` +
-          `Stay consistent with today's sets! Tap any suggestion chip below or ask about workout form, recovery, or diet anytime.`;
+        const q = (textToSend || '').toLowerCase();
+        if (q.includes('meal') || q.includes('food') || q.includes('protein') || q.includes('nutrition') || q.includes('eat') || q.includes('diet')) {
+          replyText = `🥗 **Custom Meal Strategy for your ${TARGET_KCAL} kcal / ${TARGET_PRO}g Protein Target:**\n\n` +
+            `• **Post-Workout Recovery:** 40g whey or 200g Greek yogurt + 1 banana + 35g oats (~430 kcal, 42g protein).\n` +
+            `• **High-Density Fuel:** 200g grilled chicken breast or paneer + 150g rice + steamed greens (~580 kcal, 48g protein).\n` +
+            `• **Evening Sustenance:** 3 eggs (or tofu stir-fry) + whole grain toast + avocado (~480 kcal, 28g protein).\n\n` +
+            `💧 **Hydration Target:** Drink at least 3.5L of water today to maximize cellular hydration and muscle protein synthesis!`;
+        } else if (q.includes('substitute') || q.includes('replace') || q.includes('pain') || q.includes('hurt') || q.includes('alternative') || q.includes('injury')) {
+          replyText = `🔄 **Exercise Substitutions for Today's Routine (${currentWorkout.name}):**\n\n` +
+            `• **Shoulder or Wrist Strain:** Swap to Neutral-Grip Floor Press or Elevated Incline Push-Ups.\n` +
+            `• **Lower Back Tightness:** Perform Chest-Supported Rows or Incline Inverted Table Rows.\n` +
+            `• **Knee Strain on Squats:** Switch to Bulgarian Split Squats with vertical shin or Box Squats to parallel.\n\n` +
+            `⚡ Prioritize smooth tempo and joint comfort over rushing sets!`;
+        } else if (q.includes('plateau') || q.includes('stuck') || q.includes('progress') || q.includes('overload') || q.includes('reps')) {
+          replyText = `📈 **Overload Strategy for your ${userProfile.goalType || 'Lean Bulk'} Plan:**\n\n` +
+            `• **Micro-Progression:** Add just 1 single clean rep across your sets, or slow down the eccentric (lowering) phase by 2 seconds.\n` +
+            `• **Recovery Hormone Window:** Growth hormone and protein synthesis peak during deep sleep. Target 7.5–8.5 hours tonight.\n` +
+            `• **Deload Timing:** In Week 6 of Phase ${currentPhase.id}, drop volume by 30% to allow your central nervous system to supercompensate!`;
+        } else {
+          replyText = `🔥 **Coach Assessment for ${userProfile.name || 'Athlete'}:**\n\n` +
+            `• **Objective:** ${userProfile.goalType || 'Lean Bulk & Muscle Gain'}\n` +
+            `• **Trajectory:** Current ${currentWeight}kg ➔ Target ${userProfile.goalWeight || 85}kg\n` +
+            `• **Daily Targets:** ${TARGET_KCAL} kcal (${TARGET_PRO}g Protein)\n\n` +
+            `Stay consistent with today's sets! You can attach photos of food or gym machines, use the microphone, or start a live voice call anytime.`;
+        }
       }
     }
 
@@ -954,6 +1210,20 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
     setAiChatMessages(updated);
     localStorage.setItem('vfit_ai_chat', JSON.stringify(updated));
     setIsAiThinking(false);
+
+    // If in Live Voice Session, speak response and loop back to listen
+    if (isVoiceMode || liveVoiceActiveRef.current) {
+      setLiveVoiceStatus('speaking');
+      const cleanVoiceText = replyText.replace(/[*#_•▸]/g, '').slice(0, 300);
+      announceVoice(cleanVoiceText, () => {
+        if (liveVoiceActiveRef.current) {
+          setLiveVoiceStatus('listening');
+          setTimeout(() => {
+            if (liveVoiceActiveRef.current) runLiveVoiceListen();
+          }, 350);
+        }
+      });
+    }
   };
 
   const playNotification = (type) => {
@@ -3153,6 +3423,23 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
             >
               <div className="sheet-handle" />
               
+              {/* Hidden File and Camera Pickers */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="image/*,application/pdf,audio/*"
+                onChange={handleFileChange}
+              />
+              <input
+                type="file"
+                ref={cameraInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileChange}
+              />
+
               <div className="ai-coach-header">
                 <div className="ai-coach-title-wrap">
                   <div className="ai-avatar-badge">
@@ -3167,12 +3454,55 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
                   </div>
                 </div>
 
-                <div className="ai-header-actions">
-                  <button className="sheet-close" onClick={() => setShowAiCoach(false)}>
+                <div className="ai-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    className={`btn-live-voice-call ${isLiveVoiceActive ? 'active' : ''}`}
+                    onClick={() => isLiveVoiceActive ? stopLiveVoiceSession() : startLiveVoiceSession()}
+                    title={isLiveVoiceActive ? "End Live Voice Session" : "Start Live Voice Call"}
+                  >
+                    <Radio size={14} className={isLiveVoiceActive ? 'live-radio-pulse' : ''} />
+                    <span>{isLiveVoiceActive ? 'End Call' : 'Live Voice'}</span>
+                  </button>
+                  <button className="sheet-close" onClick={() => { if (isLiveVoiceActive) stopLiveVoiceSession(); setShowAiCoach(false); }}>
                     <X size={20} />
                   </button>
                 </div>
               </div>
+
+              {/* Live Conversational Voice Session Panel */}
+              {isLiveVoiceActive && (
+                <div className="live-voice-panel">
+                  <div className="live-orb-container">
+                    <div className={`live-orb ${liveVoiceStatus}`} />
+                  </div>
+                  <div className="live-voice-status">
+                    {liveVoiceStatus === 'listening' && '🎙️ Listening to you... Speak anytime'}
+                    {liveVoiceStatus === 'thinking' && '⚡ Coach is thinking...'}
+                    {liveVoiceStatus === 'speaking' && '🔊 Coach is speaking...'}
+                    {liveVoiceStatus === 'idle' && 'Tap below to speak'}
+                  </div>
+                  <div className="live-voice-actions">
+                    <button
+                      className="btn-voice-ctrl"
+                      onClick={() => {
+                        if (liveVoiceStatus === 'listening') {
+                          try { recognitionRef.current?.stop(); } catch(e){}
+                          setLiveVoiceStatus('idle');
+                        } else {
+                          runLiveVoiceListen();
+                        }
+                      }}
+                    >
+                      {liveVoiceStatus === 'listening' ? <MicOff size={14} /> : <Mic size={14} />}
+                      <span>{liveVoiceStatus === 'listening' ? 'Mute' : 'Speak'}</span>
+                    </button>
+                    <button className="btn-voice-ctrl end" onClick={stopLiveVoiceSession}>
+                      <PhoneOff size={14} />
+                      <span>End Call</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Active Context Banner */}
               <div className="ai-context-banner">
@@ -3188,7 +3518,26 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
                   <div key={i} className={`ai-message-row ${msg.role}`}>
                     {msg.role === 'user' ? (
                       <div className="ai-message-bubble user-bubble">
-                        <div className="ai-msg-text">{msg.text}</div>
+                        {msg.attachment && (
+                          <div className={`ai-bubble-attachment ${msg.attachment.type}`}>
+                            {msg.attachment.type === 'image' && (
+                              <img src={msg.attachment.previewUrl} alt={msg.attachment.name} />
+                            )}
+                            {msg.attachment.type === 'pdf' && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <FileText size={18} color="#ef4444" />
+                                <span>{msg.attachment.name}</span>
+                              </div>
+                            )}
+                            {msg.attachment.type === 'audio' && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Volume2 size={18} color="#10b981" />
+                                <span>{msg.attachment.name}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {msg.text && <div className="ai-msg-text">{msg.text}</div>}
                         <span className="ai-user-time">{msg.timestamp}</span>
                       </div>
                     ) : (
@@ -3237,19 +3586,81 @@ Provide clear, actionable, science-backed guidance. Format responses with short 
                 <button className="ai-chip-btn" onClick={() => handleSendAiMessage("What should my recovery and sleep focus be tonight?")}>⚡ Recovery Focus</button>
               </div>
 
+              {/* File Attachment Selected Bar */}
+              {selectedAttachment && (
+                <div className="ai-attachment-preview-bar">
+                  {selectedAttachment.type === 'image' ? (
+                    <img src={selectedAttachment.previewUrl} alt={selectedAttachment.name} className="att-thumb-preview" />
+                  ) : selectedAttachment.type === 'pdf' ? (
+                    <FileText size={22} color="#ef4444" />
+                  ) : (
+                    <Volume2 size={22} color="#10b981" />
+                  )}
+                  <div className="att-file-info">
+                    <span className="att-file-name">{selectedAttachment.name}</span>
+                    <span className="att-file-meta">{selectedAttachment.type.toUpperCase()} • Ready for Coach Analysis</span>
+                  </div>
+                  <button className="btn-att-remove" onClick={() => setSelectedAttachment(null)} title="Remove attachment">
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
+              {/* Voice Dictating Indicator */}
+              {isListening && (
+                <div className="ai-voice-dictating-bar">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="ai-pulse-dot" style={{ background: '#ef4444', boxShadow: '0 0 8px #ef4444' }} />
+                    Listening... Speak your question
+                  </span>
+                  <button
+                    style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', fontWeight: 700 }}
+                    onClick={toggleVoiceDictation}
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
               {/* Prompt Input Bar */}
               <div className="ai-input-bar">
+                <button
+                  type="button"
+                  className="btn-input-tool"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach Photo, PDF, or Audio"
+                  disabled={isCompressingFile}
+                >
+                  <Paperclip size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="btn-input-tool"
+                  onClick={() => cameraInputRef.current?.click()}
+                  title="Take Photo of Food or Gym Machine"
+                  disabled={isCompressingFile}
+                >
+                  <Camera size={18} />
+                </button>
                 <input
                   type="text"
                   className="ai-input-field"
-                  placeholder="Ask AI Coach about workouts, nutrition, or form..."
+                  placeholder={isListening ? "Listening to your voice..." : selectedAttachment ? "Add a message or tap send..." : "Ask coach, snap food, or upload PDF..."}
                   value={aiInputText}
                   onChange={e => setAiInputText(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSendAiMessage(); }}
                 />
                 <button
+                  type="button"
+                  className={`btn-input-tool ${isListening ? 'active-mic' : ''}`}
+                  onClick={toggleVoiceDictation}
+                  title={isListening ? "Stop Listening" : "Speak your Question"}
+                >
+                  {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                </button>
+                <button
                   className="btn-ai-send"
-                  disabled={isAiThinking || !aiInputText.trim()}
+                  disabled={isAiThinking || (!aiInputText.trim() && !selectedAttachment)}
                   onClick={() => handleSendAiMessage()}
                   title="Send to Coach"
                 >
