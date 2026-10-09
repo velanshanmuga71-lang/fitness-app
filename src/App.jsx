@@ -33,12 +33,18 @@ import {
   ChevronLeft,
   Download,
   Upload,
-  Cloud
+  Cloud,
+  User,
+  LogIn,
+  LogOut,
+  Sparkles,
+  Scale
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
 import { programData } from './data/program';
-import { saveToCloud, loadFromCloud } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, loginWithGoogle, logoutUser, saveUserCloudData, loadUserCloudData } from './firebase';
 import './App.css';
 
 const flatRampWarmup = [
@@ -83,11 +89,30 @@ const App = () => {
   const todayDate = getLocalDate();
   const [selectedDashboardDate, setSelectedDashboardDate] = useState(todayDate);
 
+  // User Profile (Dynamic for Multi-User)
+  const [userProfile, setUserProfile] = useState(() => {
+    const saved = localStorage.getItem('userProfile');
+    return saved ? JSON.parse(saved) : {
+      name: 'Velan',
+      age: 22,
+      height: 185,
+      startingWeight: 75,
+      goalWeight: 85,
+      targetGain: '10kg',
+      onboardingCompleted: true
+    };
+  });
+
+  useEffect(() => {
+    localStorage.setItem('userProfile', JSON.stringify(userProfile));
+  }, [userProfile]);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return { msg: "Good Morning, Velan", icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Let's start building.", color: "var(--color-greeting-morning)" };
-    if (hour < 18) return { msg: "Good Afternoon, Velan", icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Stay focused.", color: "var(--color-greeting-morning)" };
-    return { msg: "Good Evening, Velan", icon: <Moon size={24} className="greeting-icon-moon" />, quote: "Finish the day strong.", color: "var(--color-greeting-evening)" };
+    const displayName = userProfile.name || 'Athlete';
+    if (hour < 12) return { msg: `Good Morning, ${displayName}`, icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Let's start building.", color: "var(--color-greeting-morning)" };
+    if (hour < 18) return { msg: `Good Afternoon, ${displayName}`, icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Stay focused.", color: "var(--color-greeting-morning)" };
+    return { msg: `Good Evening, ${displayName}`, icon: <Moon size={24} className="greeting-icon-moon" />, quote: "Finish the day strong.", color: "var(--color-greeting-evening)" };
   };
 
   const greeting = getGreeting();
@@ -357,17 +382,39 @@ const App = () => {
   useEffect(() => { localStorage.setItem('warmupCompleted', JSON.stringify(warmupCompleted)); }, [warmupCompleted]);
   useEffect(() => { localStorage.setItem('overloadLog', JSON.stringify(overloadLog)); }, [overloadLog]);
 
-  // Cloud Sync State
-  const [cloudStatus, setCloudStatus] = useState('syncing'); // 'synced' | 'syncing' | 'offline'
+  // Multi-User Auth & Cloud Sync States
+  const [currentUser, setCurrentUser] = useState(null);
+  const [cloudStatus, setCloudStatus] = useState('offline'); // 'synced' | 'syncing' | 'offline'
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingForm, setOnboardingForm] = useState({
+    name: '',
+    age: '22',
+    height: '185',
+    startingWeight: '75',
+    goalWeight: '85'
+  });
 
-  // Initial Cloud Sync: Fetch from Firebase Firestore on startup
+  // Track Firebase Auth State (Google Sign-In)
   useEffect(() => {
-    let isMounted = true;
-    const fetchCloudBackup = async () => {
-      try {
-        const cloudData = await loadFromCloud();
-        if (!isMounted) return;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        setCloudStatus('syncing');
+        const cloudData = await loadUserCloudData(user.uid);
         if (cloudData) {
+          if (cloudData.profile) {
+            setUserProfile(cloudData.profile);
+            if (!cloudData.profile.onboardingCompleted) {
+              setOnboardingForm({
+                name: cloudData.profile.name || user.displayName || '',
+                age: String(cloudData.profile.age || 22),
+                height: String(cloudData.profile.height || 185),
+                startingWeight: String(cloudData.profile.startingWeight || 75),
+                goalWeight: String(cloudData.profile.goalWeight || 85)
+              });
+              setShowOnboarding(true);
+            }
+          }
           if (cloudData.workoutHistory) setWorkoutHistory(cloudData.workoutHistory);
           if (cloudData.weightLogs && Array.isArray(cloudData.weightLogs)) setWeightLogs(cloudData.weightLogs);
           if (cloudData.nutritionHistory) setNutritionHistory(cloudData.nutritionHistory);
@@ -377,31 +424,31 @@ const App = () => {
           if (cloudData.currentPhaseIdx !== undefined) setCurrentPhaseIdx(cloudData.currentPhaseIdx);
           setCloudStatus('synced');
         } else {
-          // If Firestore is empty, seed it with current local state
-          await saveToCloud({
-            workoutHistory,
-            weightLogs,
-            nutritionHistory,
-            dailyStats,
-            warmupCompleted,
-            overloadLog,
-            currentPhaseIdx
+          // Brand new user: prompt onboarding modal
+          setOnboardingForm({
+            name: user.displayName ? user.displayName.split(' ')[0] : '',
+            age: '22',
+            height: '185',
+            startingWeight: '75',
+            goalWeight: '85'
           });
+          setShowOnboarding(true);
           setCloudStatus('synced');
         }
-      } catch (err) {
+      } else {
         setCloudStatus('offline');
       }
-    };
-    fetchCloudBackup();
-    return () => { isMounted = false; };
+    });
+    return () => unsubscribe();
   }, []);
 
-  // Auto-Sync to Firebase whenever state changes
+  // Save to Firebase under current user ID whenever state changes
   useEffect(() => {
+    if (!currentUser) return;
     const syncTimer = setTimeout(async () => {
       setCloudStatus('syncing');
-      const isSaved = await saveToCloud({
+      const isSaved = await saveUserCloudData(currentUser.uid, {
+        profile: userProfile,
         workoutHistory,
         weightLogs,
         nutritionHistory,
@@ -414,7 +461,54 @@ const App = () => {
     }, 1200);
 
     return () => clearTimeout(syncTimer);
-  }, [workoutHistory, weightLogs, nutritionHistory, dailyStats, warmupCompleted, overloadLog, currentPhaseIdx]);
+  }, [currentUser, userProfile, workoutHistory, weightLogs, nutritionHistory, dailyStats, warmupCompleted, overloadLog, currentPhaseIdx]);
+
+  const handleGoogleLogin = async () => {
+    const { user, error } = await loginWithGoogle();
+    if (error) {
+      alert("Sign-in note: " + error + "\nMake sure Google Sign-In is enabled in your Firebase console.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setCurrentUser(null);
+    setCloudStatus('offline');
+  };
+
+  const handleCompleteOnboarding = async () => {
+    const sWeight = Number(onboardingForm.startingWeight) || 75;
+    const gWeight = Number(onboardingForm.goalWeight) || 85;
+    const updatedProfile = {
+      name: onboardingForm.name.trim() || 'Athlete',
+      age: Number(onboardingForm.age) || 22,
+      height: Number(onboardingForm.height) || 185,
+      startingWeight: sWeight,
+      currentWeight: sWeight,
+      goalWeight: gWeight,
+      targetGain: `${Math.abs(gWeight - sWeight)}kg`,
+      onboardingCompleted: true
+    };
+    setUserProfile(updatedProfile);
+    const initialLogs = [{ date: todayDate, weight: sWeight }];
+    setWeightLogs(initialLogs);
+    setShowOnboarding(false);
+
+    if (currentUser) {
+      await saveUserCloudData(currentUser.uid, {
+        profile: updatedProfile,
+        workoutHistory,
+        weightLogs: initialLogs,
+        nutritionHistory,
+        dailyStats,
+        warmupCompleted,
+        overloadLog,
+        currentPhaseIdx
+      });
+      setCloudStatus('synced');
+    }
+  };
+
 
   const currentWeight = weightLogs[weightLogs.length - 1].weight;
   const lastWeightDate = weightLogs[weightLogs.length - 1].date;
@@ -707,8 +801,9 @@ const App = () => {
     setTimeout(() => setIsResetSuccess(false), 3000);
   };
 
-  const progress = currentWorkout.isRest ? 100 : (completedExercises.length / (currentWorkout.exercises?.length || 1)) * 100;
-  const weightProgress = ((currentWeight - 75) / (85 - 75)) * 100;
+  const startW = userProfile.startingWeight || 75;
+  const goalW = userProfile.goalWeight || 85;
+  const weightProgress = Math.max(0, Math.min(100, ((currentWeight - startW) / (goalW - startW || 1)) * 100));
 
   const [dashboardWeekOffset, setDashboardWeekOffset] = useState(0);
 
@@ -813,6 +908,41 @@ const App = () => {
             <button className="mobile-close-btn" onClick={() => setIsMenuOpen(false)}>
               <X size={24} />
             </button>
+          </div>
+
+          <div className="account-card">
+            {currentUser ? (
+              <div className="user-profile-badge" onClick={() => {
+                setOnboardingForm({
+                  name: userProfile.name || '',
+                  age: String(userProfile.age || 22),
+                  height: String(userProfile.height || 185),
+                  startingWeight: String(userProfile.startingWeight || 75),
+                  goalWeight: String(userProfile.goalWeight || 85)
+                });
+                setShowOnboarding(true);
+              }} title="Click to edit profile metrics">
+                <div className="user-avatar-wrap">
+                  {currentUser.photoURL ? (
+                    <img src={currentUser.photoURL} alt={userProfile.name} className="user-avatar-img" />
+                  ) : (
+                    <div className="user-avatar-placeholder">{userProfile.name?.charAt(0) || 'A'}</div>
+                  )}
+                </div>
+                <div className="user-info-text">
+                  <span className="user-name">{userProfile.name}</span>
+                  <span className="user-stats">{userProfile.height}cm • {currentWeight}kg → {userProfile.goalWeight}kg</span>
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="btn-logout" title="Sign Out">
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : (
+              <button onClick={handleGoogleLogin} className="btn-google-login">
+                <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>
+                <span>Sign In with Google</span>
+              </button>
+            )}
           </div>
 
           <div className="greeting-box">
@@ -1109,7 +1239,7 @@ const App = () => {
                   <div className="glass-card weight-card-new">
                     <div className="weight-header-new">
                       <div className="icon-badge"><TrendingUp size={20} color="white" /></div>
-                      <div><h4 className="weight-title-new">Body Weight</h4><p className="weight-subtitle-new">Goal: 85.0 kg</p></div>
+                      <div><h4 className="weight-title-new">Body Weight</h4><p className="weight-subtitle-new">Goal: {userProfile.goalWeight || 85}.0 kg</p></div>
                     </div>
                     <div className="weight-main-new">
                       {!showWeightInput ? (
@@ -1128,7 +1258,7 @@ const App = () => {
                       )}
                     </div>
                     <div className="weight-progress-bar">
-                      <div className="progress-labels"><span>75kg</span><span>{weightProgress.toFixed(0)}% to target</span><span>85kg</span></div>
+                      <div className="progress-labels"><span>{userProfile.startingWeight || 75}kg</span><span>{weightProgress.toFixed(0)}% to target</span><span>{userProfile.goalWeight || 85}kg</span></div>
                       <div className="progress-track-bg"><div className="progress-fill-bar" style={{ width: `${Math.min(100, Math.max(0, weightProgress))}%` }} /></div>
                     </div>
                   </div>
@@ -1442,11 +1572,14 @@ const App = () => {
                   <div className="ac-header">
                     <div className="ac-header-text">
                       <h4>Weight Trajectory</h4>
-                      <p>Current: {currentWeight}kg • Goal: 85kg</p>
+                      <p>Current: {currentWeight}kg • Goal: {userProfile.goalWeight || 85}kg</p>
                     </div>
                     <div className="gain-summary">
                       <span className="gain-label">TOTAL GAIN</span>
-                      <div className="gain-mini">+{(currentWeight - 75).toFixed(1)}kg</div>
+                      <div className="gain-mini">
+                        {currentWeight >= (userProfile.startingWeight || 75) ? '+' : ''}
+                        {(currentWeight - (userProfile.startingWeight || 75)).toFixed(1)}kg
+                      </div>
                     </div>
                   </div>
                   <div className="chart-container-premium">
@@ -1906,6 +2039,101 @@ const App = () => {
               <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
                 <button className="modal-btn cancel" onClick={() => setShowOverloadModal(false)}>Cancel</button>
                 <button className="modal-btn confirm" onClick={handleLogOverload}>Save Log</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dynamic Profile Onboarding & Edit Modal */}
+      <AnimatePresence>
+        {showOnboarding && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="custom-modal-overlay"
+            style={{ zIndex: 99999 }}
+            onClick={() => {
+              if (userProfile.onboardingCompleted) setShowOnboarding(false);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="glass-card onboarding-modal"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="onboarding-badge-icon">
+                <Sparkles size={28} color="var(--accent-primary)" />
+              </div>
+              <h3 className="onboarding-title">Athletic Profile Setup</h3>
+              <p className="onboarding-subtitle">Personalize your 1-year transformation metrics</p>
+
+              <div className="onboarding-fields">
+                <div className="onboarding-field">
+                  <label>Your Name / Nickname</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Velan"
+                    value={onboardingForm.name}
+                    onChange={e => setOnboardingForm(p => ({ ...p, name: e.target.value }))}
+                  />
+                </div>
+
+                <div className="onboarding-row">
+                  <div className="onboarding-field">
+                    <label>Age</label>
+                    <input
+                      type="number"
+                      placeholder="22"
+                      value={onboardingForm.age}
+                      onChange={e => setOnboardingForm(p => ({ ...p, age: e.target.value }))}
+                    />
+                  </div>
+                  <div className="onboarding-field">
+                    <label>Height (cm)</label>
+                    <input
+                      type="number"
+                      placeholder="185"
+                      value={onboardingForm.height}
+                      onChange={e => setOnboardingForm(p => ({ ...p, height: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="onboarding-row">
+                  <div className="onboarding-field">
+                    <label>Starting Weight (kg)</label>
+                    <input
+                      type="number"
+                      placeholder="75"
+                      value={onboardingForm.startingWeight}
+                      onChange={e => setOnboardingForm(p => ({ ...p, startingWeight: e.target.value }))}
+                    />
+                  </div>
+                  <div className="onboarding-field">
+                    <label>Goal Weight (kg)</label>
+                    <input
+                      type="number"
+                      placeholder="85"
+                      value={onboardingForm.goalWeight}
+                      onChange={e => setOnboardingForm(p => ({ ...p, goalWeight: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="onboarding-actions">
+                {userProfile.onboardingCompleted && (
+                  <button className="modal-btn cancel" onClick={() => setShowOnboarding(false)}>
+                    Close
+                  </button>
+                )}
+                <button className="btn-onboarding-submit" onClick={handleCompleteOnboarding}>
+                  Save Profile & Begin <ArrowRight size={16} />
+                </button>
               </div>
             </motion.div>
           </motion.div>
