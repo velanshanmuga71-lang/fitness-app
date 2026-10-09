@@ -91,6 +91,479 @@ const DEFAULT_GUEST_PROFILE = {
   onboardingCompleted: false
 };
 
+// Pure Exercise Image Resolver mapping to local assets & remote fallback
+const getExerciseImagePath = (name) => {
+  if (!name) return '/app-icon.jpg';
+  const n = name.toLowerCase().trim();
+  if (n.includes('incline') && n.includes('push')) return '/Exercise images/Incline pushups.gif';
+  if (n.includes('decline') && n.includes('push')) return '/Exercise images/Decline Push-Ups.png';
+  if (n.includes('diamond') && n.includes('push')) return '/Exercise images/Diamond Push-Ups.png';
+  if (n.includes('archer') && n.includes('push')) return '/Exercise images/Archer Push-Ups.gif';
+  if (n.includes('pike') && n.includes('push')) return '/Exercise images/Pike Push Ups.png';
+  if (n.includes('pseudo') || (n.includes('planche') && n.includes('push'))) return '/Exercise images/Pseudo Planche Push-Ups.gif';
+  if (n.includes('push-up') || n.includes('push up') || n.includes('pushups')) return '/Exercise images/Standard Push-Ups.png';
+
+  if (n.includes('archer') && n.includes('row')) return '/Exercise images/Archer Rows.png';
+  if (n.includes('one-arm') && n.includes('row')) return '/Exercise images/One-Arm Table Rows.jpg';
+  if (n.includes('towel') && n.includes('lat')) return '/Exercise images/Towel Lat Pulldowns.png';
+  if (n.includes('towel') && n.includes('row')) return '/Exercise images/Towel Rows.png';
+  if (n.includes('table row') || n.includes('inverted row') || n.includes('row')) return '/Exercise images/Table Rows.jpg';
+
+  if (n.includes('bulgarian') || n.includes('split squat')) return '/Exercise images/Bulgarian-split-squat.jpg';
+  if (n.includes('pistol') && (n.includes('assist') || n.includes('box'))) return '/Exercise images/assisted pistol squats.webp';
+  if (n.includes('pistol')) return '/Exercise images/Full Pistol Squats.png';
+  if (n.includes('wall sit') || n.includes('wall-sit')) return '/Exercise images/wall-sits.webp';
+  if (n.includes('squat')) return '/Exercise images/Air Squats.jpg';
+
+  if (n.includes('jumping lunge') || (n.includes('jump') && n.includes('lunge'))) return '/Exercise images/Jumping Lunges.gif';
+  if (n.includes('lunge')) return '/Exercise images/Reverse Lunges.png';
+
+  if (n.includes('single-leg') && n.includes('bridge')) return '/Exercise images/Single-Leg Glute Bridges.png';
+  if (n.includes('glute bridge') || n.includes('hip thrust') || n.includes('bridge')) return '/Exercise images/Glute Bridges.png';
+
+  if (n.includes('calf raise') || n.includes('calf')) return '/Exercise images/Calf Raises.jpg';
+  if (n.includes('nordic')) return '/Exercise images/Nordic Hamstring Curl.webp';
+  if (n.includes('burpee')) return '/Exercise images/Burpees.gif';
+  if (n.includes('walkout')) return '/Exercise images/plank walkouts.gif';
+  if (n.includes('plank')) return '/Exercise images/Plank.png';
+  if (n.includes('hollow')) return '/Exercise images/Hollow Body Hold.webp';
+  if (n.includes('pulse') && n.includes('superman')) return '/Exercise images/Superman Pulses.jpg';
+  if (n.includes('superman')) return '/Exercise images/Superman Holds.webp';
+  if (n.includes('russian')) return '/Exercise images/Russian Twist.webp';
+  if (n.includes('l-sit') || n.includes('lsit')) return '/Exercise images/L-Sits.webp';
+  if (n.includes('handstand')) return '/Exercise images/Wall Handstand Practice.gif';
+
+  return `https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/${n.replace(/ /g, '_')}/0.jpg`;
+};
+
+// Sports-Science Heuristic Program Generator (Offline/Resilient Fallback)
+const buildSmartHeuristicPlan = (profile) => {
+  const name = profile.name || 'Athlete';
+  const goal = profile.goalType || 'Lean Bulk & Muscle Gain';
+  const freq = profile.frequency || '3 Days / Week (Full Body)';
+  const duration = profile.duration || '48 Weeks (1 Year)';
+  const sWeight = Number(profile.startingWeight || profile.currentWeight) || 75;
+  const gWeight = Number(profile.goalWeight) || 85;
+  const age = Number(profile.age) || 22;
+  const height = Number(profile.height) || 185;
+
+  const bmr = 10 * sWeight + 6.25 * height - 5 * age + 5;
+  const tdee = Math.round(bmr * 1.45);
+  let kcal = tdee;
+  let pro = Math.round(sWeight * 2.0);
+  if (goal.includes('Fat Loss')) {
+    kcal = Math.max(1600, tdee - 450);
+    pro = Math.round(sWeight * 2.2);
+  } else if (goal.includes('Lean Bulk')) {
+    kcal = tdee + 350;
+    pro = Math.round(sWeight * 2.0);
+  } else if (goal.includes('Strength')) {
+    kcal = tdee + 200;
+    pro = Math.round(sWeight * 2.1);
+  }
+  const fat = Math.round((kcal * 0.25) / 9);
+  const carb = Math.max(120, Math.round((kcal - (pro * 4) - (fat * 9)) / 4));
+
+  const isFatLoss = goal.includes('Fat Loss');
+  let workoutsPhase1 = [];
+  let restDays = ["Tuesday", "Thursday", "Saturday", "Sunday"];
+
+  if (freq.includes('4 Days')) {
+    restDays = ["Wednesday", "Saturday", "Sunday"];
+    workoutsPhase1 = [
+      {
+        name: "Upper Body Power & Hypertrophy",
+        days: ["Monday", "Thursday"],
+        exercises: [
+          { name: "Standard Push-Ups", sets: 4, reps: isFatLoss ? "15-20" : "10-12", restTime: 60, focus: "Pectoral contraction", instruction: "Elbows at 45 degrees, full lock at top.", image: getExerciseImagePath("Standard Push-Ups") },
+          { name: "Table Rows", sets: 4, reps: "10-12", restTime: 60, focus: "Lat retraction", instruction: "Pull sternum to table, pause 1s at peak.", image: getExerciseImagePath("Table Rows") },
+          { name: "Pike Push Ups", sets: 3, reps: "8-10", restTime: 75, focus: "Anterior deltoids", instruction: "Hips elevated in V-shape, lower forehead forward.", image: getExerciseImagePath("Pike Push Ups") },
+          { name: "Towel Lat Pulldowns", sets: 3, reps: "12-15", restTime: 45, focus: "Upper back", instruction: "Maintain tension on towel throughout entire stroke.", image: getExerciseImagePath("Towel Lat Pulldowns") },
+          { name: "Plank", sets: 3, reps: "45-60s", restTime: 45, focus: "Core stability", instruction: "Posterior pelvic tilt, glutes engaged.", image: getExerciseImagePath("Plank") }
+        ]
+      },
+      {
+        name: "Lower Body & Core Drive",
+        days: ["Tuesday", "Friday"],
+        exercises: [
+          { name: "Air Squats", sets: 4, reps: isFatLoss ? "20-25" : "12-15", restTime: 60, focus: "Quad activation", instruction: "Drive knees out, deep hip crease.", image: getExerciseImagePath("Air Squats") },
+          { name: "Bulgarian Split Squats", sets: 3, reps: "10 per leg", restTime: 60, focus: "Single leg hypertrophy", instruction: "Rear foot on chair, vertical torso.", image: getExerciseImagePath("Bulgarian Split Squats") },
+          { name: "Glute Bridges", sets: 4, reps: "15-20", restTime: 45, focus: "Glute lockout", instruction: "Squeeze glutes hard for 2 seconds at top.", image: getExerciseImagePath("Glute Bridges") },
+          { name: "Calf Raises", sets: 3, reps: "20-25", restTime: 45, focus: "Calf burn", instruction: "Full stretch at bottom, squeeze at peak.", image: getExerciseImagePath("Calf Raises") },
+          { name: "Hollow Body Hold", sets: 3, reps: "30-45s", restTime: 45, focus: "Transverse abdominis", instruction: "Press lower back firmly into floor.", image: getExerciseImagePath("Hollow Body Hold") }
+        ]
+      }
+    ];
+  } else if (freq.includes('5 Days')) {
+    restDays = ["Thursday", "Sunday"];
+    workoutsPhase1 = [
+      {
+        name: "Push Day (Chest, Shoulders, Triceps)",
+        days: ["Monday", "Friday"],
+        exercises: [
+          { name: "Standard Push-Ups", sets: 4, reps: "12-15", restTime: 60, focus: "Chest", instruction: "Controlled 3-second descent.", image: getExerciseImagePath("Standard Push-Ups") },
+          { name: "Diamond Push-Ups", sets: 3, reps: "8-12", restTime: 60, focus: "Triceps peak", instruction: "Thumbs and index fingers touching.", image: getExerciseImagePath("Diamond Push-Ups") },
+          { name: "Pike Push Ups", sets: 3, reps: "8-10", restTime: 75, focus: "Deltoid drive", instruction: "Push upward and through shoulders.", image: getExerciseImagePath("Pike Push Ups") },
+          { name: "Plank", sets: 3, reps: "60s", restTime: 45, focus: "Core brace", instruction: "Tight core, neutral spine.", image: getExerciseImagePath("Plank") }
+        ]
+      },
+      {
+        name: "Pull Day (Back, Biceps, Traps)",
+        days: ["Tuesday", "Saturday"],
+        exercises: [
+          { name: "Table Rows", sets: 4, reps: "10-12", restTime: 60, focus: "Lats & Rhomboids", instruction: "Chest to table, squeeze shoulder blades.", image: getExerciseImagePath("Table Rows") },
+          { name: "Towel Lat Pulldowns", sets: 3, reps: "12-15", restTime: 45, focus: "Lat width", instruction: "Pull towel hard outward while driving elbows down.", image: getExerciseImagePath("Towel Lat Pulldowns") },
+          { name: "Superman Holds", sets: 3, reps: "10 reps (3s hold)", restTime: 45, focus: "Lower back", instruction: "Arch spine safely and hold.", image: getExerciseImagePath("Superman Holds") },
+          { name: "Russian Twist", sets: 3, reps: "20 reps", restTime: 45, focus: "Obliques", instruction: "Rotate shoulders with controlled tempo.", image: getExerciseImagePath("Russian Twist") }
+        ]
+      },
+      {
+        name: "Legs & Core Conditioning",
+        days: ["Wednesday"],
+        exercises: [
+          { name: "Air Squats", sets: 4, reps: "20 reps", restTime: 60, focus: "Quads & Glutes", instruction: "Smooth explosive tempo.", image: getExerciseImagePath("Air Squats") },
+          { name: "Bulgarian Split Squats", sets: 3, reps: "10 per leg", restTime: 60, focus: "Unilateral balance", instruction: "Drive through front heel.", image: getExerciseImagePath("Bulgarian Split Squats") },
+          { name: "Single-Leg Glute Bridges", sets: 3, reps: "12 per leg", restTime: 45, focus: "Hamstrings & Glutes", instruction: "Elevate hips completely.", image: getExerciseImagePath("Single-Leg Glute Bridges") },
+          { name: "Burpees", sets: 3, reps: "12-15", restTime: 60, focus: "Metabolic conditioning", instruction: "Chest to floor, jump up cleanly.", image: getExerciseImagePath("Burpees") }
+        ]
+      }
+    ];
+  } else {
+    // 3 Days Full Body
+    workoutsPhase1 = [
+      {
+        name: "Full Body Foundation",
+        days: ["Monday", "Wednesday", "Friday"],
+        exercises: [
+          { name: "Standard Push-Ups", sets: 3, reps: isFatLoss ? "15-20" : "10-12", restTime: 60, focus: "Chest & Triceps", instruction: "Hands slightly wider than shoulders. Maintain straight line.", image: getExerciseImagePath("Standard Push-Ups") },
+          { name: "Table Rows", sets: 3, reps: "8-12", restTime: 60, focus: "Lats & Biceps", instruction: "Pull chest up to tabletop. Reverse push-up mechanic.", image: getExerciseImagePath("Table Rows") },
+          { name: "Air Squats", sets: 3, reps: isFatLoss ? "20-25" : "15-20", restTime: 60, focus: "Quad & Glute strength", instruction: "Hips below knees, heels anchored.", image: getExerciseImagePath("Air Squats") },
+          { name: "Reverse Lunges", sets: 3, reps: "10 per leg", restTime: 60, focus: "Unilateral stability", instruction: "Knees at 90 degrees on descent.", image: getExerciseImagePath("Reverse Lunges") },
+          { name: "Plank", sets: 3, reps: "45-60s", restTime: 60, focus: "Core stability", instruction: "Brace abs like preparing for impact.", image: getExerciseImagePath("Plank") },
+          { name: "Superman Holds", sets: 3, reps: "10 reps (3s hold)", restTime: 60, focus: "Posterior chain", instruction: "Simultaneous arm and leg raise.", image: getExerciseImagePath("Superman Holds") }
+        ]
+      }
+    ];
+  }
+
+  const workoutsPhase2 = workoutsPhase1.map(w => ({
+    ...w,
+    exercises: w.exercises.map(e => ({
+      ...e,
+      sets: Math.min(5, e.sets + 1),
+      reps: typeof e.reps === 'string' && e.reps.includes('-')
+        ? `${Number(e.reps.split('-')[0]) + 2}-${Number(e.reps.split('-')[1]) + 2}`
+        : e.reps,
+      focus: "Progressive Overload & Density"
+    }))
+  }));
+
+  const numPhases = duration.includes('12') ? 2 : duration.includes('24') ? 3 : 4;
+  const phases = [
+    {
+      id: 1,
+      name: `${goal.split('&')[0].trim()} Foundation`,
+      months: "1–1.5",
+      weeks: "Weeks 1–6",
+      goal: `Establish neuromuscular baseline and progressive capacity tailored for ${goal}.`,
+      frequency: freq,
+      restBetweenExercises: 60,
+      restDays,
+      recovery: isFatLoss ? "30 min Zone 2 Incline Walk + Mobility" : "20 min Zone 2 Recovery Walk + Hamstring Stretch",
+      nutrition: { kcal, pro, carb, fat },
+      workouts: workoutsPhase1
+    },
+    {
+      id: 2,
+      name: "Volume & Hypertrophy Escalation",
+      months: "1.5–3",
+      weeks: "Weeks 7–12",
+      goal: "Escalate training volume and mechanical tension for targeted body transformation.",
+      frequency: freq,
+      restBetweenExercises: 60,
+      restDays,
+      recovery: "25 min Zone 2 Recovery + Foam Rolling",
+      nutrition: { kcal, pro, carb, fat },
+      workouts: workoutsPhase2
+    }
+  ];
+
+  if (numPhases >= 3) {
+    phases.push({
+      id: 3,
+      name: "Maximum Intensity & Strength Peak",
+      months: "3–4.5",
+      weeks: "Weeks 13–18",
+      goal: "Peak mechanical tension and neuromuscular drive with advanced variations.",
+      frequency: freq,
+      restBetweenExercises: 90,
+      restDays,
+      recovery: "Active contrast shower + 20 min mobility flow",
+      nutrition: { kcal, pro, carb, fat },
+      workouts: workoutsPhase2
+    });
+  }
+
+  if (numPhases >= 4) {
+    phases.push({
+      id: 4,
+      name: "Athletic Mastery & Final Peak",
+      months: "4.5–6+",
+      weeks: "Weeks 19–24+",
+      goal: "Consolidate body transformation and maximize work capacity and aesthetics.",
+      frequency: freq,
+      restBetweenExercises: 60,
+      restDays,
+      recovery: "Full body restorative yoga + 30 min recovery walk",
+      nutrition: { kcal, pro, carb, fat },
+      workouts: workoutsPhase2
+    });
+  }
+
+  return {
+    programTitle: `${name}'s Personalized ${goal} Protocol`,
+    programSummary: `Custom designed for ${name} (${sWeight}kg ➔ ${gWeight}kg) with ${freq} over ${duration}.`,
+    dailyTargetKcal: kcal,
+    dailyProteinGrams: pro,
+    dailyCarbsGrams: carb,
+    dailyFatGrams: fat,
+    phases
+  };
+};
+
+// Normalizes raw AI output to guarantee full schema compatibility
+const normalizePlanData = (rawPlan, profile) => {
+  if (!rawPlan || !rawPlan.phases || !Array.isArray(rawPlan.phases) || rawPlan.phases.length === 0) {
+    return buildSmartHeuristicPlan(profile);
+  }
+
+  const enrichedPhases = rawPlan.phases.map((ph, pIdx) => {
+    const workouts = (ph.workouts || []).map((w, wIdx) => {
+      let days = w.days;
+      if (!days || !Array.isArray(days) || days.length === 0) {
+        const freq = profile.frequency || '3 Days';
+        if (freq.includes('4 Days')) {
+          days = wIdx === 0 ? ["Monday", "Thursday"] : ["Tuesday", "Friday"];
+        } else if (freq.includes('5 Days')) {
+          days = wIdx === 0 ? ["Monday", "Friday"] : wIdx === 1 ? ["Tuesday", "Saturday"] : ["Wednesday"];
+        } else {
+          days = ["Monday", "Wednesday", "Friday"];
+        }
+      }
+
+      const exercises = (w.exercises || []).map(ex => ({
+        name: ex.name || 'Exercise',
+        sets: Number(ex.sets) || 3,
+        reps: ex.reps || '10-12',
+        restTime: Number(ex.restTime) || 60,
+        focus: ex.focus || 'Focus and control',
+        instruction: ex.instruction || 'Maintain proper form and tempo.',
+        breathing: ex.breathing || 'Exhale on effort, inhale on reset.',
+        image: ex.image || getExerciseImagePath(ex.name)
+      }));
+
+      return {
+        name: w.name || `Workout ${wIdx + 1}`,
+        days,
+        exercises
+      };
+    });
+
+    const defaultRest = profile.frequency?.includes('4 Days') 
+      ? ["Wednesday", "Saturday", "Sunday"] 
+      : profile.frequency?.includes('5 Days') 
+      ? ["Thursday", "Sunday"] 
+      : ["Tuesday", "Thursday", "Saturday", "Sunday"];
+
+    return {
+      id: ph.id || pIdx + 1,
+      name: ph.name || `Phase ${pIdx + 1}`,
+      months: ph.months || `${pIdx * 1.5 + 1}–${(pIdx + 1) * 1.5}`,
+      weeks: ph.weeks || `Phase ${pIdx + 1}`,
+      goal: ph.goal || 'Progressive athletic adaptation',
+      frequency: ph.frequency || profile.frequency || '3 Days / Week',
+      restBetweenExercises: ph.restBetweenExercises || 60,
+      restDays: ph.restDays || defaultRest,
+      recovery: ph.recovery || '20-30 min Zone 2 walk + mobility',
+      nutrition: ph.nutrition || {
+        kcal: rawPlan.dailyTargetKcal || 2800,
+        pro: rawPlan.dailyProteinGrams || 160,
+        carb: rawPlan.dailyCarbsGrams || 320,
+        fat: rawPlan.dailyFatGrams || 70
+      },
+      workouts
+    };
+  });
+
+  return {
+    programTitle: rawPlan.programTitle || `${profile.name || 'Athlete'}'s Custom Protocol`,
+    programSummary: rawPlan.programSummary || `Custom tailored for ${profile.goalType || 'Athletic Fitness'}`,
+    dailyTargetKcal: rawPlan.dailyTargetKcal || 2800,
+    dailyProteinGrams: rawPlan.dailyProteinGrams || 160,
+    dailyCarbsGrams: rawPlan.dailyCarbsGrams || 320,
+    dailyFatGrams: rawPlan.dailyFatGrams || 70,
+    phases: enrichedPhases
+  };
+};
+
+// Generates plan via Serverless Backend /api/generate-plan -> Direct Gemini API -> Heuristic Fallback
+const generateCustomPlanApi = async (profile) => {
+  // 1. Try serverless endpoint first
+  try {
+    const res = await fetch('/api/generate-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: profile.name,
+        age: profile.age,
+        height: profile.height,
+        weight: profile.currentWeight || profile.startingWeight,
+        goalWeight: profile.goalWeight,
+        goalType: profile.goalType,
+        duration: profile.duration,
+        frequency: profile.frequency
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.phases && Array.isArray(data.phases) && data.phases.length > 0) {
+        return normalizePlanData(data, profile);
+      }
+    }
+  } catch (err) {
+    console.warn("Serverless plan generation endpoint deferred:", err);
+  }
+
+  // 2. Direct Gemini endpoint fallback
+  const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '').trim();
+  if (apiKey) {
+    const prompt = `You are an elite sports scientist and strength coach. Create a custom periodized training program tailored specifically for this athlete:
+- Name: ${profile.name || 'Athlete'}
+- Age: ${profile.age || 22}, Height: ${profile.height || 185}cm
+- Current Weight: ${profile.currentWeight || profile.startingWeight || 75}kg -> Target: ${profile.goalWeight || 85}kg
+- Primary Goal: ${profile.goalType || 'Lean Bulk & Muscle Gain'}
+- Commitment Duration: ${profile.duration || '48 Weeks (1 Year)'}
+- Weekly Training Days: ${profile.frequency || '3 Days / Week (Full Body)'}
+
+Calculate daily calories, protein, carbs, fat.
+Provide periodized phases matching duration (12 weeks = 2 phases, 24 weeks = 3 phases, 48 weeks = 4 phases).
+Each phase has workouts matching weekly frequency, with 4-6 exercises per workout.
+Respond with ONLY valid JSON conforming to:
+{
+  "programTitle": "Custom Plan Title",
+  "programSummary": "overview",
+  "dailyTargetKcal": 2800,
+  "dailyProteinGrams": 160,
+  "dailyCarbsGrams": 320,
+  "dailyFatGrams": 70,
+  "phases": [
+    {
+      "id": 1,
+      "name": "Phase 1: Foundation",
+      "weeks": "Weeks 1-6",
+      "months": "1-1.5",
+      "goal": "adaptation",
+      "frequency": "${profile.frequency || '3 Days / Week'}",
+      "restBetweenExercises": 60,
+      "restDays": ["Tuesday", "Thursday", "Saturday", "Sunday"],
+      "recovery": "20-30 min walk",
+      "nutrition": { "kcal": 2800, "pro": 160, "carb": 320, "fat": 70 },
+      "workouts": [
+        {
+          "name": "Workout A",
+          "days": ["Monday", "Wednesday", "Friday"],
+          "exercises": [
+            { "name": "Standard Push-Ups", "sets": 3, "reps": "10-15", "restTime": 60, "focus": "Chest control", "instruction": "Form cue", "breathing": "Inhale down, exhale up." }
+          ]
+        }
+      ]
+    }
+  ]
+}`;
+
+    const models = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
+    for (const model of models) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json" }
+          })
+        });
+        if (response.ok) {
+          const result = await response.json();
+          const raw = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (raw) {
+            const parsed = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim());
+            if (parsed && parsed.phases && parsed.phases.length > 0) {
+              return normalizePlanData(parsed, profile);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`Direct model ${model} plan generation error:`, e);
+      }
+    }
+  }
+
+  // 3. Guaranteed sports science heuristic builder
+  return buildSmartHeuristicPlan(profile);
+};
+
+// Markdown & Bold text parser for AI Coach message bubbles
+const renderInlineBold = (text) => {
+  if (!text) return text;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={idx} className="ai-formatted-strong">{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+};
+
+const renderFormattedAiText = (raw) => {
+  if (!raw) return null;
+  const lines = raw.split('\n');
+  return (
+    <div className="ai-formatted-content">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} style={{ height: '0.35rem' }} />;
+        
+        if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
+          const hText = trimmed.replace(/^#+\s*/, '');
+          return <div key={idx} className="ai-formatted-heading">{renderInlineBold(hText)}</div>;
+        }
+        if (trimmed.startsWith('• ') || trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+          const bulletText = trimmed.replace(/^[•\-\*]\s*/, '');
+          return (
+            <div key={idx} className="ai-bullet-row">
+              <span className="ai-bullet-dot">▸</span>
+              <span>{renderInlineBold(bulletText)}</span>
+            </div>
+          );
+        }
+        const numMatch = trimmed.match(/^(\d+[\.\)])\s+(.*)/);
+        if (numMatch) {
+          return (
+            <div key={idx} className="ai-bullet-row">
+              <span className="ai-bullet-dot" style={{ fontWeight: 700, color: 'var(--accent-primary)', minWidth: '18px' }}>{numMatch[1]}</span>
+              <span>{renderInlineBold(numMatch[2])}</span>
+            </div>
+          );
+        }
+        return <div key={idx} className="ai-text-line">{renderInlineBold(line)}</div>;
+      })}
+    </div>
+  );
+};
+
 const App = () => {
   const [view, setView] = useState('workout'); // 'workout' or 'dashboard'
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -102,6 +575,23 @@ const App = () => {
     document.body.className = theme === 'light' ? 'light-theme' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
+  const [customProgram, setCustomProgram] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vfit_custom_program');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const activeProgram = customProgram || programData;
+
+  useEffect(() => {
+    if (customProgram) {
+      localStorage.setItem('vfit_custom_program', JSON.stringify(customProgram));
+    }
+  }, [customProgram]);
+
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(() => {
     return parseInt(localStorage.getItem('currentPhaseIdx')) || 0;
   });
@@ -220,10 +710,10 @@ const App = () => {
     return { kcal, pro, carb, fat, bmr: Math.round(bmr), tdee };
   })();
 
-  const TARGET_KCAL = dynamicNutrition.kcal;
-  const TARGET_PRO = dynamicNutrition.pro;
-  const TARGET_CARB = dynamicNutrition.carb;
-  const TARGET_FAT = dynamicNutrition.fat;
+  const TARGET_KCAL = customProgram?.dailyTargetKcal || dynamicNutrition.kcal;
+  const TARGET_PRO = customProgram?.dailyProteinGrams || dynamicNutrition.pro;
+  const TARGET_CARB = customProgram?.dailyCarbsGrams || dynamicNutrition.carb;
+  const TARGET_FAT = customProgram?.dailyFatGrams || dynamicNutrition.fat;
   const [nutritionHistory, setNutritionHistory] = useState(() => {
     return JSON.parse(localStorage.getItem('nutritionHistory')) || {};
   });
@@ -368,47 +858,70 @@ const App = () => {
     setIsAiThinking(true);
 
     const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
-    const systemPrompt = `You are V-FIT AI Coach, an expert fitness trainer and sports science nutritionist.
-User Profile:
+    const systemPrompt = `You are V-FIT AI Coach, an elite strength and conditioning specialist and sports nutritionist.
+Athlete Profile:
 - Name: ${userProfile.name || 'Athlete'}
 - Age: ${userProfile.age || 22}, Height: ${userProfile.height || 185}cm
-- Current Weight: ${currentWeight}kg, Target Goal: ${userProfile.goalWeight || 85}kg (${userProfile.goalType || 'Lean Bulk'})
+- Current Weight: ${currentWeight}kg -> Target: ${userProfile.goalWeight || 85}kg (${userProfile.goalType || 'Lean Bulk'})
 - Program Duration: ${userProfile.duration || '48 Weeks'}, Frequency: ${userProfile.frequency || '3 Days/week'}
 - Current Training Block: Phase ${currentPhase.id} (${currentPhase.name})
 - Today's Workout: ${currentWorkout.name} (Exercises: ${currentExNames})
 - Dynamic Targets: ${TARGET_KCAL} kcal daily (${TARGET_PRO}g Protein, ${TARGET_CARB}g Carbs, ${TARGET_FAT}g Fat)
 
 Instructions:
-Provide practical, encouraging, science-backed guidance. Format responses with short bullet points and bold highlights. Keep responses concise so they are quick to read between workout sets.`;
+Provide clear, actionable, science-backed guidance. Format responses with short bullet points (•) and bold text (**bold**). Keep responses concise and motivating so they are fast to digest during workouts.`;
 
     let replyText = '';
 
-    if (geminiApiKey) {
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-goog-api-key': geminiApiKey
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text: `${systemPrompt}\n\nUser Question: ${textToSend}` }]
-              }
-            ]
-          })
-        });
-        const data = await response.json();
-        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+    // Layer 1: Serverless /api/chat endpoint
+    try {
+      const serverRes = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend}` }] }]
+        })
+      });
+      if (serverRes.ok) {
+        const data = await serverRes.json();
+        if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
           replyText = data.candidates[0].content.parts[0].text;
         }
-      } catch (err) {
-        console.warn("AI generation note:", err);
+      }
+    } catch (err) {
+      console.warn("Serverless chat endpoint deferred:", err);
+    }
+
+    // Layer 2: Direct Gemini Multi-Model Cascading Fallback
+    if (!replyText) {
+      const apiKey = (geminiApiKey || '').trim();
+      const models = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
+      for (const model of models) {
+        try {
+          const directRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend}` }] }]
+            })
+          });
+          if (directRes.ok) {
+            const data = await directRes.json();
+            if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+              replyText = data.candidates[0].content.parts[0].text;
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn(`Direct model ${model} chat error:`, e);
+        }
       }
     }
 
+    // Layer 3: Dynamic Heuristic Guidance (Offline/Offline Fallback)
     if (!replyText) {
       const q = textToSend.toLowerCase();
       if (q.includes('meal') || q.includes('food') || q.includes('protein') || q.includes('nutrition') || q.includes('eat') || q.includes('diet')) {
@@ -416,24 +929,24 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
           `• **Post-Workout Recovery:** 40g whey or 200g Greek yogurt + 1 banana + 35g oats (~430 kcal, 42g protein).\n` +
           `• **High-Density Fuel:** 200g grilled chicken breast or paneer + 150g rice + steamed greens (~580 kcal, 48g protein).\n` +
           `• **Evening Sustenance:** 3 eggs (or tofu stir-fry) + whole grain toast + avocado (~480 kcal, 28g protein).\n\n` +
-          `💧 *Tip:* Drink at least 3.5L of water today to maximize cellular hydration and muscle protein synthesis!`;
+          `💧 **Hydration Target:** Drink at least 3.5L of water today to maximize cellular hydration and muscle protein synthesis!`;
       } else if (q.includes('substitute') || q.includes('replace') || q.includes('pain') || q.includes('hurt') || q.includes('alternative') || q.includes('injury')) {
         replyText = `🔄 **Exercise Substitutions for Today's Routine (${currentWorkout.name}):**\n\n` +
-          `• **If Shoulders or Wrists hurt on Dips/Push-Ups:** Swap to Neutral-Grip Dumbbell Floor Press or Elevated Incline Push-Ups.\n` +
-          `• **If Lower Back is tight on Rows:** Perform Chest-Supported Dumbbell Rows or Incline Inverted Table Rows.\n` +
-          `• **If Knees ache on Squats:** Switch to Bulgarian Split Squats with a vertical shin or Box Squats to parallel.\n\n` +
-          `Stay safe, prioritize range of motion and smooth tempo over excessive load!`;
+          `• **Shoulder or Wrist Strain:** Swap to Neutral-Grip Floor Press or Elevated Incline Push-Ups.\n` +
+          `• **Lower Back Tightness:** Perform Chest-Supported Rows or Incline Inverted Table Rows.\n` +
+          `• **Knee Strain on Squats:** Switch to Bulgarian Split Squats with vertical shin or Box Squats to parallel.\n\n` +
+          `⚡ Prioritize smooth tempo and joint comfort over rushing sets!`;
       } else if (q.includes('plateau') || q.includes('stuck') || q.includes('progress') || q.includes('overload') || q.includes('reps')) {
         replyText = `📈 **Overload Strategy for your ${userProfile.goalType || 'Lean Bulk'} Plan:**\n\n` +
-          `1. **Micro-Progression:** Don't rush; add just 1 single clean rep across your sets, or slow down the eccentric (lowering) phase by 2 seconds.\n` +
-          `2. **Recovery Hormone Window:** Growth hormone and muscle protein synthesis peak during deep sleep. Target 7.5–8.5 hours tonight.\n` +
-          `3. **Deload Timing:** In Week 6 of Phase ${currentPhase.id}, volume drops by 40% so your central nervous system can recover and supercompensate!`;
+          `• **Micro-Progression:** Add just 1 single clean rep across your sets, or slow down the eccentric (lowering) phase by 2 seconds.\n` +
+          `• **Recovery Hormone Window:** Growth hormone and protein synthesis peak during deep sleep. Target 7.5–8.5 hours tonight.\n` +
+          `• **Deload Timing:** In Week 6 of Phase ${currentPhase.id}, drop volume by 30% to allow your central nervous system to supercompensate!`;
       } else {
         replyText = `🔥 **Coach Assessment for ${userProfile.name || 'Athlete'}:**\n\n` +
-          `• Objective: **${userProfile.goalType || 'Lean Bulk & Muscle Gain'}**\n` +
-          `• Trajectory: Current **${currentWeight}kg** ➔ Target **${userProfile.goalWeight || 85}kg**\n` +
-          `• Daily Target: **${TARGET_KCAL} kcal** (${TARGET_PRO}g Protein)\n\n` +
-          `Stay consistent with today's sets! You can tap any suggestion pill below or ask about workout form, recovery, or diet anytime.`;
+          `• **Objective:** ${userProfile.goalType || 'Lean Bulk & Muscle Gain'}\n` +
+          `• **Trajectory:** Current ${currentWeight}kg ➔ Target ${userProfile.goalWeight || 85}kg\n` +
+          `• **Daily Targets:** ${TARGET_KCAL} kcal (${TARGET_PRO}g Protein)\n\n` +
+          `Stay consistent with today's sets! Tap any suggestion chip below or ask about workout form, recovery, or diet anytime.`;
       }
     }
 
@@ -646,6 +1159,10 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
           if (hasValidProfile) {
             setUserProfile(cloudData.profile);
+            if (cloudData.customProgram) {
+              setCustomProgram(cloudData.customProgram);
+              localStorage.setItem('vfit_custom_program', JSON.stringify(cloudData.customProgram));
+            }
             if (cloudData.workoutHistory) setWorkoutHistory(cloudData.workoutHistory);
             if (cloudData.weightLogs && Array.isArray(cloudData.weightLogs) && cloudData.weightLogs.length > 0) {
               setWeightLogs(cloudData.weightLogs);
@@ -699,6 +1216,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
       setCloudStatus('syncing');
       const isSaved = await saveUserCloudData(currentUser.uid, {
         profile: userProfile,
+        customProgram,
         workoutHistory,
         weightLogs,
         nutritionHistory,
@@ -711,7 +1229,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
     }, 1200);
 
     return () => clearTimeout(syncTimer);
-  }, [currentUser, userProfile, workoutHistory, weightLogs, nutritionHistory, dailyStats, warmupCompleted, overloadLog, currentPhaseIdx]);
+  }, [currentUser, userProfile, customProgram, workoutHistory, weightLogs, nutritionHistory, dailyStats, warmupCompleted, overloadLog, currentPhaseIdx]);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
@@ -768,6 +1286,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
     // Wipe all user profile and workout data from localStorage
     localStorage.removeItem('userProfile');
+    localStorage.removeItem('vfit_custom_program');
     localStorage.removeItem('workoutHistory');
     localStorage.removeItem('weightLogs');
     localStorage.removeItem('nutritionHistory');
@@ -777,6 +1296,8 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
     // Reset all React state to default guest state
     setUserProfile(DEFAULT_GUEST_PROFILE);
+    setCustomProgram(null);
+    setCurrentPhaseIdx(0);
     setWorkoutHistory({});
     setWeightLogs([{ date: todayDate, weight: 75 }]);
     setNutritionHistory({});
@@ -785,7 +1306,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
     setOverloadLog({});
   };
 
-  const handleCompleteOnboarding = async () => {
+  const handleCompleteOnboarding = async (shouldGenerateAi = true) => {
     const sWeight = Number(onboardingForm.startingWeight) || 75;
     const gWeight = Number(onboardingForm.goalWeight) || 85;
     const profileName = onboardingForm.name.trim() || (currentUser?.displayName ? currentUser.displayName.split(' ')[0] : 'Athlete');
@@ -807,19 +1328,46 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
     setUserProfile(updatedProfile);
     const initialLogs = [{ date: todayDate, weight: sWeight }];
     setWeightLogs(initialLogs);
+
+    let newPlan = null;
+    if (shouldGenerateAi) {
+      setIsGeneratingPlan(true);
+      try {
+        newPlan = await generateCustomPlanApi(updatedProfile);
+        if (newPlan) {
+          setCustomProgram(newPlan);
+          localStorage.setItem('vfit_custom_program', JSON.stringify(newPlan));
+          setCurrentPhaseIdx(0);
+        }
+      } catch (err) {
+        console.warn("AI plan generation error, using smart heuristic:", err);
+        newPlan = buildSmartHeuristicPlan(updatedProfile);
+        setCustomProgram(newPlan);
+        localStorage.setItem('vfit_custom_program', JSON.stringify(newPlan));
+        setCurrentPhaseIdx(0);
+      } finally {
+        setIsGeneratingPlan(false);
+      }
+    } else {
+      setCustomProgram(null);
+      localStorage.removeItem('vfit_custom_program');
+      setCurrentPhaseIdx(0);
+    }
+
     setShowOnboarding(false);
 
     if (currentUser) {
       setCloudStatus('syncing');
       await saveUserCloudData(currentUser.uid, {
         profile: updatedProfile,
+        customProgram: newPlan || null,
         workoutHistory,
         weightLogs: initialLogs,
         nutritionHistory,
         dailyStats,
         warmupCompleted,
         overloadLog,
-        currentPhaseIdx
+        currentPhaseIdx: 0
       });
       setCloudStatus('synced');
     }
@@ -835,9 +1383,9 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
   const getWorkoutByDay = (dateObj) => {
     const weekday = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-    const phase = (programData?.phases && programData.phases[currentPhaseIdx])
-      ? programData.phases[currentPhaseIdx]
-      : (programData?.phases?.[0] || { id: 1, name: "Foundation", workouts: [] });
+    const phase = (activeProgram?.phases && activeProgram.phases[currentPhaseIdx])
+      ? activeProgram.phases[currentPhaseIdx]
+      : (activeProgram?.phases?.[0] || { id: 1, name: "Foundation", workouts: [] });
 
     if (phase.restDays && phase.restDays.includes(weekday)) {
       return {
@@ -848,13 +1396,15 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
       };
     }
 
-    if (phase.id === 4) {
+    if (!customProgram && phase.id === 4) {
       const mapping = { "Monday": 0, "Tuesday": 1, "Thursday": 2, "Friday": 3, "Saturday": 4 };
-      if (mapping[weekday] !== undefined) return phase.workouts[mapping[weekday]];
+      if (mapping[weekday] !== undefined && phase.workouts?.[mapping[weekday]]) {
+        return phase.workouts[mapping[weekday]];
+      }
     }
 
-    const workout = phase.workouts.find(w => w.days && w.days.includes(weekday));
-    return workout || { name: "Rest Day", isRest: true, exercises: [] };
+    const workout = (phase.workouts || []).find(w => w.days && w.days.includes(weekday));
+    return workout || (phase.workouts && phase.workouts[0]) || { name: "Rest Day", isRest: true, exercises: [] };
   };
 
   const todayObj = new Date();
@@ -870,7 +1420,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
       return {
         ...ex,
         name: `Primer: ${firstMainEx.name}`,
-        image: firstMainEx.image, // Use the image from the actual first exercise
+        image: firstMainEx.image || getExerciseImagePath(firstMainEx.name), // Use image from actual first exercise
         target: `Light set of ${firstMainEx.name} to potentiate CNS`,
         volume: "1 set x 15 reps (Light Weight)"
       };
@@ -879,9 +1429,9 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
   });
 
   const tomorrowWorkout = getWorkoutByDay(tomorrowObj);
-  const currentPhase = (programData?.phases && programData.phases[currentPhaseIdx])
-    ? programData.phases[currentPhaseIdx]
-    : (programData?.phases?.[0] || { id: 1, name: "Foundation", weeks: "6 Weeks", months: "1-2", workouts: [] });
+  const currentPhase = (activeProgram?.phases && activeProgram.phases[currentPhaseIdx])
+    ? activeProgram.phases[currentPhaseIdx]
+    : (activeProgram?.phases?.[0] || { id: 1, name: "Foundation", weeks: "6 Weeks", months: "1-2", workouts: [] });
 
   // Calculate estimated time for today's workout
   const calculateWorkoutTime = (workout, phase) => {
@@ -1293,7 +1843,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
           <div className="nav-label">PLAN PHASES</div>
           <nav className="nav-phases">
-            {programData.phases.map((phase, idx) => (
+            {activeProgram.phases.map((phase, idx) => (
               <div
                 key={phase.id}
                 className={`nav-item phase-item ${currentPhaseIdx === idx ? 'active' : ''}`}
@@ -1511,11 +2061,11 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                               >
                                 <div className="ex-main">
                                   <div className="ex-thumb">
-                                    {ex.image ? (
-                                      <img src={ex.image} alt={ex.name} />
-                                    ) : (
-                                      <img src={`https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/${ex.name.toLowerCase().replace(/ /g, '_')}/0.jpg`} alt={ex.name} onError={(e) => { e.target.src = '/app-icon.jpg'; }} />
-                                    )}
+                                    <img 
+                                      src={ex.image || getExerciseImagePath(ex.name)} 
+                                      alt={ex.name} 
+                                      onError={(e) => { e.target.src = '/app-icon.jpg'; }} 
+                                    />
                                   </div>
                                   <div className="ex-details">
                                     <h4>{ex.name}</h4>
@@ -1851,9 +2401,9 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                 </div>
 
                 <div className="glass-card roadmap-card">
-                  <h3>12-Month Accelerated Performance Roadmap</h3>
+                  <h3>{customProgram ? `${userProfile.name || 'Athlete'}'s Performance Roadmap` : '12-Month Accelerated Performance Roadmap'}</h3>
                   <div className="roadmap-list">
-                    {programData.phases.map((phase, idx) => {
+                    {activeProgram.phases.map((phase, idx) => {
                       const sessionsPerWeek = parseInt(phase.frequency) || 3;
                       const totalExpected = sessionsPerWeek * 6; // 6 weeks per block (1-Year Fast Track)
                       const sessionsDoneInThisPhase = getSessionsForPhase(phase.id);
@@ -2003,7 +2553,11 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                     exit={{ opacity: 0, y: -30 }}
                   >
                     <div className="session-visual-wrapper">
-                      <img src={currentWorkout.exercises[activeExIdx].image} alt={currentWorkout.exercises[activeExIdx].name} />
+                      <img 
+                        src={currentWorkout.exercises[activeExIdx]?.image || getExerciseImagePath(currentWorkout.exercises[activeExIdx]?.name)} 
+                        alt={currentWorkout.exercises[activeExIdx]?.name || 'Exercise'} 
+                        onError={(e) => { e.target.src = '/app-icon.jpg'; }}
+                      />
                       <div className="visual-stats-overlay">
                         <div className="stats-glass-card">
                           <div className="stat-item-premium">
@@ -2256,11 +2810,71 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
             >
               <div className="sheet-handle" />
               <div className="sheet-header">
-                <h3>Training Plans</h3>
+                <div>
+                  <h3 style={{ margin: 0 }}>Training Plans</h3>
+                  <div style={{ fontSize: '0.78rem', color: customProgram ? '#a5b4fc' : 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {customProgram ? (
+                      <>
+                        <Sparkles size={12} color="#a5b4fc" />
+                        <span>AI Custom: {customProgram.programTitle || 'Personalized Routine'}</span>
+                      </>
+                    ) : (
+                      <span>Velan's Master Blueprint (48 Weeks)</span>
+                    )}
+                  </div>
+                </div>
                 <button className="sheet-close" onClick={() => setIsPlansOpen(false)}><X size={20} /></button>
               </div>
+
+              {/* Plan Action Bar */}
+              <div style={{ padding: '0.6rem 1.25rem 0.2rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {customProgram ? (
+                  <>
+                    <button
+                      style={{ padding: '0.45rem 0.85rem', fontSize: '0.78rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', cursor: 'pointer', transition: 'all 0.2s' }}
+                      onClick={() => {
+                        setCustomProgram(null);
+                        localStorage.removeItem('vfit_custom_program');
+                        setCurrentPhaseIdx(0);
+                      }}
+                    >
+                      Reset to Master Blueprint
+                    </button>
+                    <button
+                      style={{ padding: '0.45rem 0.95rem', fontSize: '0.78rem', borderRadius: '10px', background: 'linear-gradient(135deg, #6366f1, #a855f7)', color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: 700 }}
+                      onClick={async () => {
+                        setIsGeneratingPlan(true);
+                        const plan = await generateCustomPlanApi(userProfile);
+                        setCustomProgram(plan);
+                        localStorage.setItem('vfit_custom_program', JSON.stringify(plan));
+                        setCurrentPhaseIdx(0);
+                        setIsGeneratingPlan(false);
+                      }}
+                      disabled={isGeneratingPlan}
+                    >
+                      <Sparkles size={13} /> {isGeneratingPlan ? 'Re-analyzing...' : 'Re-generate with AI'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', borderRadius: '10px', background: 'linear-gradient(135deg, #6366f1, #a855f7)', color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 700, width: '100%', justifyContent: 'center' }}
+                    onClick={async () => {
+                      setIsGeneratingPlan(true);
+                      const plan = await generateCustomPlanApi(userProfile);
+                      setCustomProgram(plan);
+                      localStorage.setItem('vfit_custom_program', JSON.stringify(plan));
+                      setCurrentPhaseIdx(0);
+                      setIsGeneratingPlan(false);
+                    }}
+                    disabled={isGeneratingPlan}
+                  >
+                    <Sparkles size={14} /> {isGeneratingPlan ? 'Designing with Gemini...' : '⚡ Generate AI Plan for My Biometrics'}
+                  </button>
+                )}
+              </div>
+
               <div className="plans-sheet-grid">
-                {programData.phases.map((phase, idx) => (
+                {activeProgram.phases.map((phase, idx) => (
                   <div
                     key={phase.id}
                     className={`plan-sheet-item ${currentPhaseIdx === idx ? 'active' : ''}`}
@@ -2562,22 +3176,30 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
               {/* Active Context Banner */}
               <div className="ai-context-banner">
-                <span>🎯 {userProfile.goalType || 'Lean Bulk'}</span>
-                <span>⚖️ {currentWeight}kg ➔ {userProfile.goalWeight || 85}kg</span>
-                <span>🥗 {TARGET_KCAL} kcal</span>
-                <span>💪 Phase {currentPhase.id}</span>
+                <span className="ai-context-tag">🎯 {userProfile.goalType || 'Lean Bulk'}</span>
+                <span className="ai-context-tag">⚖️ {currentWeight}kg ➔ {userProfile.goalWeight || 85}kg</span>
+                <span className="ai-context-tag">🥗 {TARGET_KCAL} kcal</span>
+                <span className="ai-context-tag">💪 Phase {currentPhase.id}</span>
               </div>
 
               {/* Chat Message Stream */}
               <div className="ai-chat-messages">
                 {aiChatMessages.map((msg, i) => (
                   <div key={i} className={`ai-message-row ${msg.role}`}>
-                    <div className="ai-message-bubble">
-                      <div className="ai-msg-header">
-                        <span className="ai-msg-sender">{msg.role === 'assistant' ? 'AI Coach' : (userProfile.name || 'You')}</span>
-                        <div className="ai-msg-tools">
-                          <span className="ai-msg-time">{msg.timestamp}</span>
-                          {msg.role === 'assistant' && (
+                    {msg.role === 'user' ? (
+                      <div className="ai-message-bubble user-bubble">
+                        <div className="ai-msg-text">{msg.text}</div>
+                        <span className="ai-user-time">{msg.timestamp}</span>
+                      </div>
+                    ) : (
+                      <div className="ai-message-bubble assistant-bubble">
+                        <div className="ai-assistant-header">
+                          <div className="ai-assistant-title">
+                            <Sparkles size={13} color="#a5b4fc" />
+                            <span>AI Coach</span>
+                          </div>
+                          <div className="ai-assistant-tools">
+                            <span className="ai-msg-time">{msg.timestamp}</span>
                             <button
                               className="btn-read-aloud"
                               onClick={() => announceVoice(msg.text.replace(/[*#_]/g, ''))}
@@ -2585,17 +3207,23 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                             >
                               <Volume2 size={13} />
                             </button>
-                          )}
+                          </div>
                         </div>
+                        {renderFormattedAiText(msg.text)}
                       </div>
-                      <div className="ai-msg-text" style={{ whiteSpace: 'pre-line' }}>{msg.text}</div>
-                    </div>
+                    )}
                   </div>
                 ))}
                 {isAiThinking && (
                   <div className="ai-message-row assistant">
-                    <div className="ai-message-bubble thinking">
-                      <span className="ai-typing-indicator">Analyzing your athletic profile...</span>
+                    <div className="ai-message-bubble assistant-bubble thinking">
+                      <div className="ai-assistant-header">
+                        <div className="ai-assistant-title">
+                          <Sparkles size={13} color="#a5b4fc" />
+                          <span>AI Coach</span>
+                        </div>
+                      </div>
+                      <span className="ai-typing-indicator">Analyzing athletic biometrics & periodization...</span>
                     </div>
                   </div>
                 )}
@@ -2603,16 +3231,17 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
 
               {/* Quick Action Suggestion Chips */}
               <div className="ai-quick-chips">
-                <button onClick={() => handleSendAiMessage("What is an optimal high-protein meal for my daily target?")}>🍗 Meal Idea</button>
-                <button onClick={() => handleSendAiMessage("What exercise can I substitute for today's routine if I have joint strain?")}>🔄 Exercise Swap</button>
-                <button onClick={() => handleSendAiMessage("How do I break through a strength and hypertrophy plateau?")}>📈 Break Plateau</button>
-                <button onClick={() => handleSendAiMessage("What should my recovery and sleep focus be tonight?")}>⚡ Recovery Focus</button>
+                <button className="ai-chip-btn" onClick={() => handleSendAiMessage("What is an optimal high-protein meal for my daily target?")}>🍗 Meal Idea</button>
+                <button className="ai-chip-btn" onClick={() => handleSendAiMessage("What exercise can I substitute for today's routine if I have joint strain?")}>🔄 Exercise Swap</button>
+                <button className="ai-chip-btn" onClick={() => handleSendAiMessage("How do I break through a strength and hypertrophy plateau?")}>📈 Break Plateau</button>
+                <button className="ai-chip-btn" onClick={() => handleSendAiMessage("What should my recovery and sleep focus be tonight?")}>⚡ Recovery Focus</button>
               </div>
 
               {/* Prompt Input Bar */}
               <div className="ai-input-bar">
                 <input
                   type="text"
+                  className="ai-input-field"
                   placeholder="Ask AI Coach about workouts, nutrition, or form..."
                   value={aiInputText}
                   onChange={e => setAiInputText(e.target.value)}
@@ -2940,16 +3569,40 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                 })()}
               </div>
 
-              <div className="onboarding-actions">
-                {userProfile.onboardingCompleted && (
-                  <button className="modal-btn cancel" onClick={() => setShowOnboarding(false)}>
-                    Close
+              {isGeneratingPlan ? (
+                <div className="ai-plan-generating-card" style={{ marginTop: '1.25rem', padding: '1.25rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '16px', textAlign: 'center' }}>
+                  <div className="ai-typing-indicator" style={{ justifyContent: 'center', marginBottom: '0.6rem', fontSize: '0.9rem' }}>
+                    <Sparkles size={16} /> Generating Tailored Plan with Gemini AI...
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.4 }}>
+                    Customizing training phases, exercise selections, volume, and metabolic nutrition targets for your biometrics.
+                  </p>
+                </div>
+              ) : (
+                <div className="onboarding-actions" style={{ flexDirection: 'column', gap: '0.75rem', marginTop: '1.5rem' }}>
+                  <button
+                    className="btn-onboarding-submit"
+                    style={{ width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #6366f1, #a855f7)', padding: '0.9rem 1.25rem' }}
+                    onClick={() => handleCompleteOnboarding(true)}
+                  >
+                    <Sparkles size={18} /> ⚡ Generate Personalized AI Plan
                   </button>
-                )}
-                <button className="btn-onboarding-submit" onClick={handleCompleteOnboarding}>
-                  Save Profile & Begin <ArrowRight size={16} />
-                </button>
-              </div>
+                  <div style={{ display: 'flex', width: '100%', gap: '0.6rem' }}>
+                    {userProfile.onboardingCompleted && (
+                      <button className="modal-btn cancel" style={{ flex: 1 }} onClick={() => setShowOnboarding(false)}>
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      className="modal-btn"
+                      style={{ flex: 1, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)' }}
+                      onClick={() => handleCompleteOnboarding(false)}
+                    >
+                      Use Standard Blueprint
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}
