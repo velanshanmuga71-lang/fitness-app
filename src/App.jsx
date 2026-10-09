@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Dumbbell,
   Calendar,
@@ -69,6 +69,18 @@ const flatRampWarmup = [
   { name: "Primer Set", image: null, target: "First exercise of the day (Low Intensity)", volume: "1 set x 15 reps", type: 'reps', phase: "Potentiate" }
 ];
 
+const DEFAULT_GUEST_PROFILE = {
+  name: '',
+  age: 22,
+  height: 185,
+  startingWeight: 75,
+  currentWeight: 75,
+  goalWeight: 85,
+  goalType: 'Lean Bulk & Muscle Gain',
+  targetGain: '10kg',
+  onboardingCompleted: false
+};
+
 const App = () => {
   const [view, setView] = useState('workout'); // 'workout' or 'dashboard'
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -102,25 +114,31 @@ const App = () => {
 
   // User Profile (Dynamic for Multi-User)
   const [userProfile, setUserProfile] = useState(() => {
-    const saved = localStorage.getItem('userProfile');
-    return saved ? JSON.parse(saved) : {
-      name: 'Velan',
-      age: 22,
-      height: 185,
-      startingWeight: 75,
-      goalWeight: 85,
-      targetGain: '10kg',
-      onboardingCompleted: true
-    };
+    try {
+      const saved = localStorage.getItem('userProfile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Automatically purge old hardcoded test template "Velan"
+        if (parsed.name === 'Velan' && (!parsed.goalType || !parsed.onboardingCompleted)) {
+          return DEFAULT_GUEST_PROFILE;
+        }
+        return parsed;
+      }
+    } catch (e) {
+      console.warn("Storage parse error:", e);
+    }
+    return DEFAULT_GUEST_PROFILE;
   });
 
   useEffect(() => {
-    localStorage.setItem('userProfile', JSON.stringify(userProfile));
+    if (userProfile && userProfile.name) {
+      localStorage.setItem('userProfile', JSON.stringify(userProfile));
+    }
   }, [userProfile]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
-    const displayName = userProfile.name || 'Athlete';
+    const displayName = (userProfile.name && userProfile.name.trim()) ? userProfile.name.trim() : 'Athlete';
     if (hour < 12) return { msg: `Good Morning, ${displayName}`, icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Let's start building.", color: "var(--color-greeting-morning)" };
     if (hour < 18) return { msg: `Good Afternoon, ${displayName}`, icon: <Sun size={24} className="greeting-icon-sun" />, quote: "Stay focused.", color: "var(--color-greeting-morning)" };
     return { msg: `Good Evening, ${displayName}`, icon: <Moon size={24} className="greeting-icon-moon" />, quote: "Finish the day strong.", color: "var(--color-greeting-evening)" };
@@ -396,58 +414,74 @@ const App = () => {
   // Multi-User Auth & Cloud Sync States
   const [currentUser, setCurrentUser] = useState(null);
   const [cloudStatus, setCloudStatus] = useState('offline'); // 'synced' | 'syncing' | 'offline'
+  const isCloudLoadedRef = useRef(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingForm, setOnboardingForm] = useState({
     name: '',
     age: '22',
     height: '185',
     startingWeight: '75',
-    goalWeight: '85'
+    goalWeight: '85',
+    goalType: 'Lean Bulk & Muscle Gain'
   });
 
-  // Track Firebase Auth State (Google Sign-In)
+  // Track Firebase Auth State (Google & Email Sign-In)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
         setCloudStatus('syncing');
-        const cloudData = await loadUserCloudData(user.uid);
-        if (cloudData) {
-          if (cloudData.profile) {
+        isCloudLoadedRef.current = false;
+        try {
+          const cloudData = await loadUserCloudData(user.uid);
+          
+          // A profile is valid if the user has explicitly completed onboarding AND has a personalized name (not the old placeholder 'Velan')
+          const hasValidProfile = 
+            cloudData?.profile && 
+            cloudData.profile.onboardingCompleted === true &&
+            cloudData.profile.name && 
+            cloudData.profile.name !== 'Velan' &&
+            cloudData.profile.goalType;
+
+          if (hasValidProfile) {
             setUserProfile(cloudData.profile);
-            if (!cloudData.profile.onboardingCompleted) {
-              setOnboardingForm({
-                name: cloudData.profile.name || user.displayName || '',
-                age: String(cloudData.profile.age || 22),
-                height: String(cloudData.profile.height || 185),
-                startingWeight: String(cloudData.profile.startingWeight || 75),
-                goalWeight: String(cloudData.profile.goalWeight || 85)
-              });
-              setShowOnboarding(true);
+            if (cloudData.workoutHistory) setWorkoutHistory(cloudData.workoutHistory);
+            if (cloudData.weightLogs && Array.isArray(cloudData.weightLogs) && cloudData.weightLogs.length > 0) {
+              setWeightLogs(cloudData.weightLogs);
             }
+            if (cloudData.nutritionHistory) setNutritionHistory(cloudData.nutritionHistory);
+            if (cloudData.dailyStats) setDailyStats(cloudData.dailyStats);
+            if (cloudData.warmupCompleted) setWarmupCompleted(cloudData.warmupCompleted);
+            if (cloudData.overloadLog) setOverloadLog(cloudData.overloadLog);
+            if (cloudData.currentPhaseIdx !== undefined) setCurrentPhaseIdx(cloudData.currentPhaseIdx);
+            setCloudStatus('synced');
+          } else {
+            // First time login OR account that was never onboarded:
+            // ALWAYS prompt the Athletic Profile Setup Modal!
+            const suggestedName = user.displayName 
+              ? user.displayName.split(' ')[0] 
+              : (cloudData?.profile?.name && cloudData.profile.name !== 'Velan' ? cloudData.profile.name : '');
+            
+            setOnboardingForm({
+              name: suggestedName,
+              age: String(cloudData?.profile?.age || '22'),
+              height: String(cloudData?.profile?.height || '185'),
+              startingWeight: String(cloudData?.profile?.startingWeight || '75'),
+              goalWeight: String(cloudData?.profile?.goalWeight || '85'),
+              goalType: cloudData?.profile?.goalType || 'Lean Bulk & Muscle Gain'
+            });
+            setShowOnboarding(true);
+            setCloudStatus('synced');
           }
-          if (cloudData.workoutHistory) setWorkoutHistory(cloudData.workoutHistory);
-          if (cloudData.weightLogs && Array.isArray(cloudData.weightLogs)) setWeightLogs(cloudData.weightLogs);
-          if (cloudData.nutritionHistory) setNutritionHistory(cloudData.nutritionHistory);
-          if (cloudData.dailyStats) setDailyStats(cloudData.dailyStats);
-          if (cloudData.warmupCompleted) setWarmupCompleted(cloudData.warmupCompleted);
-          if (cloudData.overloadLog) setOverloadLog(cloudData.overloadLog);
-          if (cloudData.currentPhaseIdx !== undefined) setCurrentPhaseIdx(cloudData.currentPhaseIdx);
-          setCloudStatus('synced');
-        } else {
-          // Brand new user: prompt onboarding modal
-          setOnboardingForm({
-            name: user.displayName ? user.displayName.split(' ')[0] : '',
-            age: '22',
-            height: '185',
-            startingWeight: '75',
-            goalWeight: '85'
-          });
-          setShowOnboarding(true);
-          setCloudStatus('synced');
+        } catch (err) {
+          console.error("Cloud load error:", err);
+          setCloudStatus('offline');
+        } finally {
+          isCloudLoadedRef.current = true;
         }
       } else {
         setCloudStatus('offline');
+        isCloudLoadedRef.current = false;
       }
     });
     return () => unsubscribe();
@@ -455,7 +489,9 @@ const App = () => {
 
   // Save to Firebase under current user ID whenever state changes
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !isCloudLoadedRef.current) return;
+    if (!userProfile.onboardingCompleted) return;
+
     const syncTimer = setTimeout(async () => {
       setCloudStatus('syncing');
       const isSaved = await saveUserCloudData(currentUser.uid, {
@@ -523,29 +559,53 @@ const App = () => {
 
   const handleLogout = async () => {
     await logoutUser();
+    isCloudLoadedRef.current = false;
     setCurrentUser(null);
     setCloudStatus('offline');
+
+    // Wipe all user profile and workout data from localStorage
+    localStorage.removeItem('userProfile');
+    localStorage.removeItem('workoutHistory');
+    localStorage.removeItem('weightLogs');
+    localStorage.removeItem('nutritionHistory');
+    localStorage.removeItem('dailyStats');
+    localStorage.removeItem('warmupCompleted');
+    localStorage.removeItem('overloadLog');
+
+    // Reset all React state to default guest state
+    setUserProfile(DEFAULT_GUEST_PROFILE);
+    setWorkoutHistory({});
+    setWeightLogs([{ date: todayDate, weight: 75 }]);
+    setNutritionHistory({});
+    setDailyStats({});
+    setWarmupCompleted({});
+    setOverloadLog({});
   };
 
   const handleCompleteOnboarding = async () => {
     const sWeight = Number(onboardingForm.startingWeight) || 75;
     const gWeight = Number(onboardingForm.goalWeight) || 85;
+    const profileName = onboardingForm.name.trim() || (currentUser?.displayName ? currentUser.displayName.split(' ')[0] : 'Athlete');
+
     const updatedProfile = {
-      name: onboardingForm.name.trim() || 'Athlete',
+      name: profileName,
       age: Number(onboardingForm.age) || 22,
       height: Number(onboardingForm.height) || 185,
       startingWeight: sWeight,
       currentWeight: sWeight,
       goalWeight: gWeight,
+      goalType: onboardingForm.goalType || 'Lean Bulk & Muscle Gain',
       targetGain: `${Math.abs(gWeight - sWeight)}kg`,
       onboardingCompleted: true
     };
+
     setUserProfile(updatedProfile);
     const initialLogs = [{ date: todayDate, weight: sWeight }];
     setWeightLogs(initialLogs);
     setShowOnboarding(false);
 
     if (currentUser) {
+      setCloudStatus('syncing');
       await saveUserCloudData(currentUser.uid, {
         profile: updatedProfile,
         workoutHistory,
@@ -854,7 +914,10 @@ const App = () => {
 
   const startW = userProfile.startingWeight || 75;
   const goalW = userProfile.goalWeight || 85;
-  const weightProgress = Math.max(0, Math.min(100, ((currentWeight - startW) / (goalW - startW || 1)) * 100));
+  const isLosing = goalW < startW;
+  const totalDiff = Math.abs(goalW - startW) || 1;
+  const currentDiff = isLosing ? (startW - currentWeight) : (currentWeight - startW);
+  const weightProgress = Math.max(0, Math.min(100, (currentDiff / totalDiff) * 100));
 
   const [dashboardWeekOffset, setDashboardWeekOffset] = useState(0);
 
@@ -969,7 +1032,8 @@ const App = () => {
                   age: String(userProfile.age || 22),
                   height: String(userProfile.height || 185),
                   startingWeight: String(userProfile.startingWeight || 75),
-                  goalWeight: String(userProfile.goalWeight || 85)
+                  goalWeight: String(userProfile.goalWeight || 85),
+                  goalType: userProfile.goalType || 'Lean Bulk & Muscle Gain'
                 });
                 setShowOnboarding(true);
               }} title="Click to edit profile metrics">
@@ -1620,59 +1684,71 @@ const App = () => {
 
               <div className="dashboard-side-col">
                 <div className="glass-card analytics-card-compact">
-                  <div className="ac-header">
-                    <div className="ac-header-text">
-                      <h4>Weight Trajectory</h4>
-                      <p>Current: {currentWeight}kg • Goal: {userProfile.goalWeight || 85}kg</p>
-                    </div>
-                    <div className="gain-summary">
-                      <span className="gain-label">TOTAL GAIN</span>
-                      <div className="gain-mini">
-                        {currentWeight >= (userProfile.startingWeight || 75) ? '+' : ''}
-                        {(currentWeight - (userProfile.startingWeight || 75)).toFixed(1)}kg
-                      </div>
-                    </div>
-                  </div>
-                  <div className="chart-container-premium">
-                    <svg width="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity="0.4" />
-                          <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      {/* Area Fill */}
-                      <path
-                        d={`M 0 100 ${weightLogs.map((l, i) => `${(i / (weightLogs.length - 1 || 1)) * 100},${100 - ((l.weight - 70) / 20) * 100}`).join(' ')} L 100 100 Z`}
-                        fill="url(#chartGradient)"
-                      />
-                      {/* Line */}
-                      <polyline
-                        fill="none"
-                        stroke="var(--accent-primary)"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        points={weightLogs.map((l, i) => `${(i / (weightLogs.length - 1 || 1)) * 100},${100 - ((l.weight - 70) / 20) * 100}`).join(' ')}
-                      />
-                      {/* Points */}
-                      {weightLogs.map((l, i) => (
-                        <circle
-                          key={i}
-                          cx={(i / (weightLogs.length - 1 || 1)) * 100}
-                          cy={100 - ((l.weight - 70) / 20) * 100}
-                          r="2"
-                          fill="white"
-                          stroke="var(--accent-primary)"
-                          strokeWidth="1"
-                        />
-                      ))}
-                    </svg>
-                    <div className="chart-axis-labels">
-                      <span>{new Date(weightLogs[0].date).toLocaleDateString('en-US', { month: 'short' })}</span>
-                      <span>TODAY</span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const allWeights = (weightLogs && weightLogs.length > 0 ? weightLogs.map(l => l.weight) : [75]).concat([userProfile.startingWeight || 75, userProfile.goalWeight || 85]);
+                    const minChartW = Math.min(...allWeights) - 2;
+                    const maxChartW = Math.max(...allWeights) + 2;
+                    const rangeChartW = (maxChartW - minChartW) || 10;
+                    const pointsStr = weightLogs.map((l, i) => `${(i / (weightLogs.length - 1 || 1)) * 100},${100 - ((l.weight - minChartW) / rangeChartW) * 100}`).join(' ');
+
+                    return (
+                      <>
+                        <div className="ac-header">
+                          <div className="ac-header-text">
+                            <h4>Weight Trajectory</h4>
+                            <p>Current: {currentWeight}kg • Goal: {userProfile.goalWeight || 85}kg</p>
+                          </div>
+                          <div className="gain-summary">
+                            <span className="gain-label">{isLosing ? 'TOTAL LOSS' : 'TOTAL GAIN'}</span>
+                            <div className="gain-mini">
+                              {currentWeight >= (userProfile.startingWeight || 75) ? '+' : ''}
+                              {(currentWeight - (userProfile.startingWeight || 75)).toFixed(1)}kg
+                            </div>
+                          </div>
+                        </div>
+                        <div className="chart-container-premium">
+                          <svg width="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <defs>
+                              <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity="0.4" />
+                                <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity="0" />
+                              </linearGradient>
+                            </defs>
+                            {/* Area Fill */}
+                            <path
+                              d={`M 0 100 ${pointsStr} L 100 100 Z`}
+                              fill="url(#chartGradient)"
+                            />
+                            {/* Line */}
+                            <polyline
+                              fill="none"
+                              stroke="var(--accent-primary)"
+                              strokeWidth="3"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              points={pointsStr}
+                            />
+                            {/* Points */}
+                            {weightLogs.map((l, i) => (
+                              <circle
+                                key={i}
+                                cx={(i / (weightLogs.length - 1 || 1)) * 100}
+                                cy={100 - ((l.weight - minChartW) / rangeChartW) * 100}
+                                r="2"
+                                fill="white"
+                                stroke="var(--accent-primary)"
+                                strokeWidth="1"
+                              />
+                            ))}
+                          </svg>
+                          <div className="chart-axis-labels">
+                            <span>{new Date(weightLogs[0]?.date || todayDate).toLocaleDateString('en-US', { month: 'short' })}</span>
+                            <span>TODAY</span>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <div className="glass-card consistency-card">
@@ -2035,11 +2111,16 @@ const App = () => {
                         )}
                       </div>
                       <div className="account-user-details">
-                        <h4>{userProfile.name}</h4>
+                        <h4>{userProfile.name || 'Athlete'}</h4>
                         <p>{currentUser.email}</p>
-                        <span className={`cloud-sync-pill-mobile ${cloudStatus}`}>
-                          <Cloud size={12} /> {cloudStatus === 'synced' ? 'Cloud Synced' : cloudStatus === 'syncing' ? 'Syncing...' : 'Local Mode'}
-                        </span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginTop: '3px' }}>
+                          <span className={`cloud-sync-pill-mobile ${cloudStatus}`}>
+                            <Cloud size={12} /> {cloudStatus === 'synced' ? 'Cloud Synced' : cloudStatus === 'syncing' ? 'Syncing...' : 'Local Mode'}
+                          </span>
+                          <span className="account-goal-pill">
+                            <Sparkles size={11} /> {userProfile.goalType || 'Lean Bulk & Muscle Gain'}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -2072,7 +2153,8 @@ const App = () => {
                             age: String(userProfile.age || 22),
                             height: String(userProfile.height || 185),
                             startingWeight: String(userProfile.startingWeight || 75),
-                            goalWeight: String(userProfile.goalWeight || 85)
+                            goalWeight: String(userProfile.goalWeight || 85),
+                            goalType: userProfile.goalType || 'Lean Bulk & Muscle Gain'
                           });
                           setShowOnboarding(true);
                         }}
@@ -2345,10 +2427,25 @@ const App = () => {
                   <label>Your Name / Nickname</label>
                   <input
                     type="text"
-                    placeholder="e.g. Velan"
+                    placeholder="Enter your name / nickname"
                     value={onboardingForm.name}
                     onChange={e => setOnboardingForm(p => ({ ...p, name: e.target.value }))}
                   />
+                </div>
+
+                <div className="onboarding-field">
+                  <label>Transformation Goal (What do you want to achieve?)</label>
+                  <select
+                    value={onboardingForm.goalType || 'Lean Bulk & Muscle Gain'}
+                    onChange={e => setOnboardingForm(p => ({ ...p, goalType: e.target.value }))}
+                    className="onboarding-select"
+                  >
+                    <option value="Lean Bulk & Muscle Gain">🏋️‍♂️ Lean Bulk & Muscle Gain (+10kg)</option>
+                    <option value="Fat Loss & Body Shred">🔥 Fat Loss & Lean Shred</option>
+                    <option value="Strength & Power Development">⚡ Strength & Power Development</option>
+                    <option value="Body Recomposition">🔄 Body Recomposition (Muscle + Fat Loss)</option>
+                    <option value="Athletic Conditioning & Fitness">🏃 Athletic Conditioning & Fitness</option>
+                  </select>
                 </div>
 
                 <div className="onboarding-row">
