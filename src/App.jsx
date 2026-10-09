@@ -40,7 +40,15 @@ import {
   Sparkles,
   Scale,
   Mail,
-  Lock
+  Lock,
+  Bot,
+  Send,
+  Volume2,
+  VolumeX,
+  Key,
+  Settings,
+  Sliders,
+  MessageSquare
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -77,6 +85,8 @@ const DEFAULT_GUEST_PROFILE = {
   currentWeight: 75,
   goalWeight: 85,
   goalType: 'Lean Bulk & Muscle Gain',
+  duration: '48 Weeks (1 Year)',
+  frequency: '3 Days / Week (Full Body)',
   targetGain: '10kg',
   onboardingCompleted: false
 };
@@ -146,33 +156,62 @@ const App = () => {
 
   const greeting = getGreeting();
 
-  // Dynamic Nutrition Targets based on Phase
-  const phaseNutrition = programData.phases[currentPhaseIdx]?.nutrition || { kcal: 2800, pro: 165, carb: 355, fat: 80 };
-  const TARGET_KCAL = phaseNutrition.kcal;
-  const TARGET_PRO = phaseNutrition.pro;
-  const TARGET_CARB = phaseNutrition.carb;
-  const TARGET_FAT = phaseNutrition.fat;
-
   // Persistence states
   const [workoutHistory, setWorkoutHistory] = useState(() => {
     return JSON.parse(localStorage.getItem('workoutHistory')) || {};
   });
 
-  // Progressive Overload Log: { "ExerciseName": [{ date, reps, sets, note }] }
-  const [overloadLog, setOverloadLog] = useState(() => {
-    return JSON.parse(localStorage.getItem('overloadLog')) || {};
-  });
-  const [showOverloadModal, setShowOverloadModal] = useState(false);
-  const [overloadTarget, setOverloadTarget] = useState(null); // { name, currentReps, currentSets }
-  const [overloadInput, setOverloadInput] = useState({ reps: '', sets: '', note: '' });
-
-  // Custom Modal State
-  const [showResetModal, setShowResetModal] = useState(false);
-  const [isResetSuccess, setIsResetSuccess] = useState(false);
   const [weightLogs, setWeightLogs] = useState(() => {
     const existing = localStorage.getItem('weightLogs');
     return existing ? JSON.parse(existing) : [{ date: new Date().toISOString().split('T')[0], weight: 75 }];
   });
+
+  // Biometric Scientific Nutrition Engine (Mifflin-St Jeor formula)
+  const dynamicNutrition = (() => {
+    const age = Number(userProfile.age) || 22;
+    const height = Number(userProfile.height) || 185;
+    const currentW = Number(weightLogs && weightLogs.length > 0 ? weightLogs[weightLogs.length - 1].weight : (userProfile.startingWeight || 75));
+    const goalType = userProfile.goalType || 'Lean Bulk & Muscle Gain';
+
+    // Mifflin-St Jeor BMR: 10 * weight(kg) + 6.25 * height(cm) - 5 * age + 5
+    const bmr = 10 * currentW + 6.25 * height - 5 * age + 5;
+    const tdee = Math.round(bmr * 1.45); // Moderate athletic activity
+
+    let kcal, pro, carb, fat;
+    if (goalType.includes('Fat Loss')) {
+      kcal = Math.max(1600, tdee - 450);
+      pro = Math.round(currentW * 2.2);
+      fat = Math.round((kcal * 0.25) / 9);
+      carb = Math.max(80, Math.round((kcal - (pro * 4 + fat * 9)) / 4));
+    } else if (goalType.includes('Lean Bulk')) {
+      kcal = tdee + 350;
+      pro = Math.round(currentW * 1.9);
+      fat = Math.round((kcal * 0.25) / 9);
+      carb = Math.max(150, Math.round((kcal - (pro * 4 + fat * 9)) / 4));
+    } else if (goalType.includes('Strength')) {
+      kcal = tdee + 200;
+      pro = Math.round(currentW * 2.0);
+      fat = Math.round((kcal * 0.28) / 9);
+      carb = Math.max(120, Math.round((kcal - (pro * 4 + fat * 9)) / 4));
+    } else if (goalType.includes('Recomposition')) {
+      kcal = tdee;
+      pro = Math.round(currentW * 2.1);
+      fat = Math.round((kcal * 0.25) / 9);
+      carb = Math.max(100, Math.round((kcal - (pro * 4 + fat * 9)) / 4));
+    } else {
+      kcal = tdee + 100;
+      pro = Math.round(currentW * 1.7);
+      fat = Math.round((kcal * 0.22) / 9);
+      carb = Math.max(180, Math.round((kcal - (pro * 4 + fat * 9)) / 4));
+    }
+
+    return { kcal, pro, carb, fat, bmr: Math.round(bmr), tdee };
+  })();
+
+  const TARGET_KCAL = dynamicNutrition.kcal;
+  const TARGET_PRO = dynamicNutrition.pro;
+  const TARGET_CARB = dynamicNutrition.carb;
+  const TARGET_FAT = dynamicNutrition.fat;
   const [nutritionHistory, setNutritionHistory] = useState(() => {
     return JSON.parse(localStorage.getItem('nutritionHistory')) || {};
   });
@@ -205,43 +244,179 @@ const App = () => {
   const [isResting, setIsResting] = useState(false);
   const [timerTotal, setTimerTotal] = useState(0);
 
+  // Voice Coach Personas & Audio Settings
+  const [voicePersona, setVoicePersona] = useState(() => localStorage.getItem('vfit_voice_persona') || 'female');
+  const [voiceRate, setVoiceRate] = useState(() => parseFloat(localStorage.getItem('vfit_voice_rate')) || 0.95);
+  const [availableVoices, setAvailableVoices] = useState([]);
+
+  useEffect(() => {
+    localStorage.setItem('vfit_voice_persona', voicePersona);
+    localStorage.setItem('vfit_voice_rate', voiceRate.toString());
+  }, [voicePersona, voiceRate]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const loadVoices = () => {
+        const v = window.speechSynthesis.getVoices();
+        if (v && v.length > 0) setAvailableVoices(v);
+      };
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, []);
+
   const announceVoice = async (text) => {
     try {
       await TextToSpeech.stop();
       await TextToSpeech.speak({
         text: text,
         lang: 'en-US',
-        rate: 1.0,
-        pitch: 1.0,
+        rate: voiceRate,
+        pitch: voicePersona === 'female' ? 1.05 : voicePersona === 'energetic' ? 1.15 : 0.95,
         volume: 1.0,
         category: 'ambient',
       });
     } catch (e) {
-      // Fallback for Web/Browser
       if ('speechSynthesis' in window) {
         const msg = new SpeechSynthesisUtterance();
         msg.text = text;
-        msg.rate = 0.95; // Slightly slower for a more natural, less "hard" feel
-        msg.pitch = 1.05; // Slightly higher pitch for a clearer female-leaning tone
+        msg.rate = voicePersona === 'energetic' ? 1.1 : voicePersona === 'calm' ? 0.85 : voiceRate;
+        msg.pitch = voicePersona === 'female' ? 1.05 : voicePersona === 'male' ? 0.9 : 1.0;
         msg.volume = 1.0;
 
         window.speechSynthesis.cancel();
 
-        const voices = window.speechSynthesis.getVoices();
+        const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
         if (voices.length > 0) {
-          // Look for common female/natural voice names
-          const femaleVoice = voices.find(v =>
-            (v.name.toLowerCase().includes('female') ||
-              v.name.toLowerCase().includes('google us english') ||
-              v.name.toLowerCase().includes('samantha') ||
-              v.name.toLowerCase().includes('victoria')) &&
-            v.lang.startsWith('en')
-          );
-          if (femaleVoice) msg.voice = femaleVoice;
+          let chosenVoice = null;
+          if (voicePersona === 'male') {
+            chosenVoice = voices.find(v => (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david') || v.name.toLowerCase().includes('daniel') || v.name.toLowerCase().includes('guy') || v.name.toLowerCase().includes('george')) && v.lang.startsWith('en'));
+          } else {
+            chosenVoice = voices.find(v => (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('google us english') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('victoria') || v.name.toLowerCase().includes('jenny')) && v.lang.startsWith('en'));
+          }
+          if (chosenVoice) msg.voice = chosenVoice;
         }
         window.speechSynthesis.speak(msg);
       }
     }
+  };
+
+  const handleTestVoice = (persona = voicePersona) => {
+    const phrases = {
+      female: "Hey champion! I'm Coach Maya. Ready to crush today's session?",
+      male: "Let's lock in! Focus on clean form and dominate every set.",
+      energetic: "Energy up! Three, two, one, let's smash this workout!",
+      calm: "Breathe deep, maintain controlled tempo, and build resilience."
+    };
+    announceVoice(phrases[persona] || phrases.female);
+  };
+
+  // AI Coach Assistant States
+  const [showAiCoach, setShowAiCoach] = useState(false);
+  const [aiChatMessages, setAiChatMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vfit_ai_chat');
+      return saved ? JSON.parse(saved) : [
+        {
+          role: 'assistant',
+          text: "Hey! I'm your V-FIT AI Coach. I'm connected to your live biometric profile, current training block, and nutrition targets. How can I optimize your session today?",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [aiInputText, setAiInputText] = useState('');
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('vfit_gemini_api_key') || '');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [tempApiKeyInput, setTempApiKeyInput] = useState('');
+
+  const handleSendAiMessage = async (customPrompt) => {
+    const textToSend = (customPrompt || aiInputText).trim();
+    if (!textToSend || isAiThinking) return;
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const newHistory = [...aiChatMessages, { role: 'user', text: textToSend, timestamp: timeStr }];
+    setAiChatMessages(newHistory);
+    setAiInputText('');
+    setIsAiThinking(true);
+
+    const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
+    const systemPrompt = `You are V-FIT AI Coach, an expert fitness trainer and sports science nutritionist.
+User Profile:
+- Name: ${userProfile.name || 'Athlete'}
+- Age: ${userProfile.age || 22}, Height: ${userProfile.height || 185}cm
+- Current Weight: ${currentWeight}kg, Target Goal: ${userProfile.goalWeight || 85}kg (${userProfile.goalType || 'Lean Bulk'})
+- Program Duration: ${userProfile.duration || '48 Weeks'}, Frequency: ${userProfile.frequency || '3 Days/week'}
+- Current Training Block: Phase ${currentPhase.id} (${currentPhase.name})
+- Today's Workout: ${currentWorkout.name} (Exercises: ${currentExNames})
+- Dynamic Targets: ${TARGET_KCAL} kcal daily (${TARGET_PRO}g Protein, ${TARGET_CARB}g Carbs, ${TARGET_FAT}g Fat)
+
+Instructions:
+Provide practical, encouraging, science-backed guidance. Format responses with short bullet points and bold highlights. Keep responses concise so they are quick to read between workout sets.`;
+
+    let replyText = '';
+
+    if (geminiApiKey) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: `${systemPrompt}\n\nUser Question: ${textToSend}` }]
+              }
+            ]
+          })
+        });
+        const data = await response.json();
+        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          replyText = data.candidates[0].content.parts[0].text;
+        } else if (data.error) {
+          replyText = `⚠️ Gemini API note: ${data.error.message || 'Check your API key in AI settings.'}`;
+        }
+      } catch (err) {
+        console.warn("Gemini call failed, using heuristic coach:", err);
+      }
+    }
+
+    if (!replyText) {
+      const q = textToSend.toLowerCase();
+      if (q.includes('meal') || q.includes('food') || q.includes('protein') || q.includes('nutrition') || q.includes('eat') || q.includes('diet')) {
+        replyText = `🥗 **Custom Meal Strategy for your ${TARGET_KCAL} kcal / ${TARGET_PRO}g Protein Target:**\n\n` +
+          `• **Post-Workout Recovery:** 40g whey or 200g Greek yogurt + 1 banana + 35g oats (~430 kcal, 42g protein).\n` +
+          `• **High-Density Fuel:** 200g grilled chicken breast or paneer + 150g rice + steamed greens (~580 kcal, 48g protein).\n` +
+          `• **Evening Sustenance:** 3 eggs (or tofu stir-fry) + whole grain toast + avocado (~480 kcal, 28g protein).\n\n` +
+          `💧 *Tip:* Drink at least 3.5L of water today to maximize cellular hydration and muscle protein synthesis!`;
+      } else if (q.includes('substitute') || q.includes('replace') || q.includes('pain') || q.includes('hurt') || q.includes('alternative') || q.includes('injury')) {
+        replyText = `🔄 **Exercise Substitutions for Today's Routine (${currentWorkout.name}):**\n\n` +
+          `• **If Shoulders or Wrists hurt on Dips/Push-Ups:** Swap to Neutral-Grip Dumbbell Floor Press or Elevated Incline Push-Ups.\n` +
+          `• **If Lower Back is tight on Rows:** Perform Chest-Supported Dumbbell Rows or Incline Inverted Table Rows.\n` +
+          `• **If Knees ache on Squats:** Switch to Bulgarian Split Squats with a vertical shin or Box Squats to parallel.\n\n` +
+          `Stay safe, prioritize range of motion and smooth tempo over excessive load!`;
+      } else if (q.includes('plateau') || q.includes('stuck') || q.includes('progress') || q.includes('overload') || q.includes('reps')) {
+        replyText = `📈 **Overload Strategy for your ${userProfile.goalType || 'Lean Bulk'} Plan:**\n\n` +
+          `1. **Micro-Progression:** Don't rush; add just 1 single clean rep across your sets, or slow down the eccentric (lowering) phase by 2 seconds.\n` +
+          `2. **Recovery Hormone Window:** Growth hormone and muscle protein synthesis peak during deep sleep. Target 7.5–8.5 hours tonight.\n` +
+          `3. **Deload Timing:** In Week 6 of Phase ${currentPhase.id}, volume drops by 40% so your central nervous system can recover and supercompensate!`;
+      } else {
+        replyText = `🔥 **Coach Assessment for ${userProfile.name || 'Athlete'}:**\n\n` +
+          `• Objective: **${userProfile.goalType || 'Lean Bulk & Muscle Gain'}**\n` +
+          `• Trajectory: Current **${currentWeight}kg** ➔ Target **${userProfile.goalWeight || 85}kg**\n` +
+          `• Daily Target: **${TARGET_KCAL} kcal** (${TARGET_PRO}g Protein)\n\n` +
+          `Stay consistent with today's sets! You can tap any suggestion pill below or ask about workout form, recovery, or diet.\n\n` +
+          `*(Want full live conversational AI? Add your free Google Gemini API key in the AI settings above).*`;
+      }
+    }
+
+    const updated = [...newHistory, { role: 'assistant', text: replyText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
+    setAiChatMessages(updated);
+    localStorage.setItem('vfit_ai_chat', JSON.stringify(updated));
+    setIsAiThinking(false);
   };
 
   const playNotification = (type) => {
@@ -422,7 +597,9 @@ const App = () => {
     height: '185',
     startingWeight: '75',
     goalWeight: '85',
-    goalType: 'Lean Bulk & Muscle Gain'
+    goalType: 'Lean Bulk & Muscle Gain',
+    duration: '48 Weeks (1 Year)',
+    frequency: '3 Days / Week (Full Body)'
   });
 
   // Track Firebase Auth State (Google & Email Sign-In)
@@ -468,7 +645,9 @@ const App = () => {
               height: String(cloudData?.profile?.height || '185'),
               startingWeight: String(cloudData?.profile?.startingWeight || '75'),
               goalWeight: String(cloudData?.profile?.goalWeight || '85'),
-              goalType: cloudData?.profile?.goalType || 'Lean Bulk & Muscle Gain'
+              goalType: cloudData?.profile?.goalType || 'Lean Bulk & Muscle Gain',
+              duration: cloudData?.profile?.duration || '48 Weeks (1 Year)',
+              frequency: cloudData?.profile?.frequency || '3 Days / Week (Full Body)'
             });
             setShowOnboarding(true);
             setCloudStatus('synced');
@@ -595,6 +774,8 @@ const App = () => {
       currentWeight: sWeight,
       goalWeight: gWeight,
       goalType: onboardingForm.goalType || 'Lean Bulk & Muscle Gain',
+      duration: onboardingForm.duration || '48 Weeks (1 Year)',
+      frequency: onboardingForm.frequency || '3 Days / Week (Full Body)',
       targetGain: `${Math.abs(gWeight - sWeight)}kg`,
       onboardingCompleted: true
     };
@@ -2143,7 +2324,60 @@ const App = () => {
                       </div>
                     </div>
 
+                    {/* Voice & Audio Coach Selector */}
+                    <div className="voice-coach-card-mobile">
+                      <div className="voice-coach-header">
+                        <div className="vc-title-wrap">
+                          <Volume2 size={15} color="var(--accent-primary)" />
+                          <span>Voice Coach Persona</span>
+                        </div>
+                        <button className="btn-test-voice-pill" onClick={() => handleTestVoice(voicePersona)}>
+                          <Volume2 size={12} /> Test
+                        </button>
+                      </div>
+                      <div className="voice-personas-grid">
+                        <div 
+                          className={`vp-item ${voicePersona === 'female' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('female'); handleTestVoice('female'); }}
+                        >
+                          <strong>👩 Maya</strong>
+                          <small>Natural</small>
+                        </div>
+                        <div 
+                          className={`vp-item ${voicePersona === 'male' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('male'); handleTestVoice('male'); }}
+                        >
+                          <strong>👨 Alex</strong>
+                          <small>Focused</small>
+                        </div>
+                        <div 
+                          className={`vp-item ${voicePersona === 'energetic' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('energetic'); handleTestVoice('energetic'); }}
+                        >
+                          <strong>⚡ Energy</strong>
+                          <small>Upbeat</small>
+                        </div>
+                        <div 
+                          className={`vp-item ${voicePersona === 'calm' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('calm'); handleTestVoice('calm'); }}
+                        >
+                          <strong>🧘 Zen</strong>
+                          <small>Controlled</small>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="account-sheet-actions">
+                      <button
+                        className="btn-sheet-action ai"
+                        onClick={() => {
+                          setIsAccountSheetOpen(false);
+                          setShowAiCoach(true);
+                        }}
+                      >
+                        <Bot size={16} /> Consult V-FIT AI Coach
+                      </button>
+
                       <button
                         className="btn-sheet-action primary"
                         onClick={() => {
@@ -2154,7 +2388,9 @@ const App = () => {
                             height: String(userProfile.height || 185),
                             startingWeight: String(userProfile.startingWeight || 75),
                             goalWeight: String(userProfile.goalWeight || 85),
-                            goalType: userProfile.goalType || 'Lean Bulk & Muscle Gain'
+                            goalType: userProfile.goalType || 'Lean Bulk & Muscle Gain',
+                            duration: userProfile.duration || '48 Weeks (1 Year)',
+                            frequency: userProfile.frequency || '3 Days / Week (Full Body)'
                           });
                           setShowOnboarding(true);
                         }}
@@ -2236,6 +2472,164 @@ const App = () => {
           <span>{currentUser ? (userProfile.name?.split(' ')[0] || 'Profile') : 'Account'}</span>
         </div>
       </nav>
+
+      {/* Floating AI Coach Button */}
+      <motion.button
+        whileHover={{ scale: 1.06 }}
+        whileTap={{ scale: 0.94 }}
+        className="fab-ai-coach"
+        onClick={() => setShowAiCoach(true)}
+        title="Open V-FIT AI Coach"
+      >
+        <div className="fab-ai-glow" />
+        <Bot size={22} color="white" />
+        <span className="fab-ai-label">AI Coach</span>
+      </motion.button>
+
+      {/* V-FIT AI Coach Modal / Sheet */}
+      <AnimatePresence>
+        {showAiCoach && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="plans-sheet-overlay"
+              style={{ zIndex: 99990 }}
+              onClick={() => setShowAiCoach(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="plans-sheet ai-coach-sheet"
+              style={{ zIndex: 99995 }}
+            >
+              <div className="sheet-handle" />
+              
+              <div className="ai-coach-header">
+                <div className="ai-coach-title-wrap">
+                  <div className="ai-avatar-badge">
+                    <Bot size={22} color="white" />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0 }}>V-FIT AI Coach</h3>
+                    <span className="ai-status-pill">
+                      <span className="ai-pulse-dot" />
+                      {geminiApiKey ? 'Gemini 2.0 / 1.5 Flash' : 'Smart Fitness Engine'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="ai-header-actions">
+                  <button
+                    className="ai-btn-icon"
+                    onClick={() => { setTempApiKeyInput(geminiApiKey); setShowApiKeyModal(!showApiKeyModal); }}
+                    title="Gemini API Key Settings"
+                  >
+                    <Key size={18} color={geminiApiKey ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
+                  </button>
+                  <button className="sheet-close" onClick={() => setShowAiCoach(false)}>
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Gemini API Key Box */}
+              {showApiKeyModal && (
+                <div className="ai-apikey-box">
+                  <div className="ai-apikey-desc">
+                    <strong>Google Gemini Free API Key</strong>
+                    <p>Get a 100% free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)' }}>Google AI Studio</a> for unlimited conversational intelligence ($0, no credit card needed).</p>
+                  </div>
+                  <div className="ai-apikey-row">
+                    <input
+                      type="password"
+                      placeholder="Paste Gemini API Key here"
+                      value={tempApiKeyInput}
+                      onChange={e => setTempApiKeyInput(e.target.value)}
+                    />
+                    <button onClick={() => {
+                      setGeminiApiKey(tempApiKeyInput.trim());
+                      localStorage.setItem('vfit_gemini_api_key', tempApiKeyInput.trim());
+                      setShowApiKeyModal(false);
+                    }}>Save</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Active Context Banner */}
+              <div className="ai-context-banner">
+                <span>🎯 {userProfile.goalType || 'Lean Bulk'}</span>
+                <span>⚖️ {currentWeight}kg ➔ {userProfile.goalWeight || 85}kg</span>
+                <span>🥗 {TARGET_KCAL} kcal</span>
+                <span>💪 Phase {currentPhase.id}</span>
+              </div>
+
+              {/* Chat Message Stream */}
+              <div className="ai-chat-messages">
+                {aiChatMessages.map((msg, i) => (
+                  <div key={i} className={`ai-message-row ${msg.role}`}>
+                    <div className="ai-message-bubble">
+                      <div className="ai-msg-header">
+                        <span className="ai-msg-sender">{msg.role === 'assistant' ? 'AI Coach' : (userProfile.name || 'You')}</span>
+                        <div className="ai-msg-tools">
+                          <span className="ai-msg-time">{msg.timestamp}</span>
+                          {msg.role === 'assistant' && (
+                            <button
+                              className="btn-read-aloud"
+                              onClick={() => announceVoice(msg.text.replace(/[*#_]/g, ''))}
+                              title="Listen to Coach"
+                            >
+                              <Volume2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="ai-msg-text" style={{ whiteSpace: 'pre-line' }}>{msg.text}</div>
+                    </div>
+                  </div>
+                ))}
+                {isAiThinking && (
+                  <div className="ai-message-row assistant">
+                    <div className="ai-message-bubble thinking">
+                      <span className="ai-typing-indicator">Analyzing your athletic profile...</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Action Suggestion Chips */}
+              <div className="ai-quick-chips">
+                <button onClick={() => handleSendAiMessage("What is an optimal high-protein meal for my daily target?")}>🍗 Meal Idea</button>
+                <button onClick={() => handleSendAiMessage("What exercise can I substitute for today's routine if I have joint strain?")}>🔄 Exercise Swap</button>
+                <button onClick={() => handleSendAiMessage("How do I break through a strength and hypertrophy plateau?")}>📈 Break Plateau</button>
+                <button onClick={() => handleSendAiMessage("What should my recovery and sleep focus be tonight?")}>⚡ Recovery Focus</button>
+              </div>
+
+              {/* Prompt Input Bar */}
+              <div className="ai-input-bar">
+                <input
+                  type="text"
+                  placeholder="Ask AI Coach about workouts, nutrition, or form..."
+                  value={aiInputText}
+                  onChange={e => setAiInputText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSendAiMessage(); }}
+                />
+                <button
+                  className="btn-ai-send"
+                  disabled={isAiThinking || !aiInputText.trim()}
+                  onClick={() => handleSendAiMessage()}
+                  title="Send to Coach"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Progressive Overload Log Modal */}
       <AnimatePresence>
@@ -2489,6 +2883,60 @@ const App = () => {
                     />
                   </div>
                 </div>
+
+                <div className="onboarding-row">
+                  <div className="onboarding-field">
+                    <label>Plan Duration</label>
+                    <select
+                      value={onboardingForm.duration || '48 Weeks (1 Year)'}
+                      onChange={e => setOnboardingForm(p => ({ ...p, duration: e.target.value }))}
+                      className="onboarding-select"
+                    >
+                      <option value="12 Weeks (3 Months)">12 Weeks (3 Months - Sprint)</option>
+                      <option value="24 Weeks (6 Months)">24 Weeks (6 Months - Build)</option>
+                      <option value="48 Weeks (1 Year)">48 Weeks (1 Year - Master)</option>
+                    </select>
+                  </div>
+                  <div className="onboarding-field">
+                    <label>Weekly Frequency</label>
+                    <select
+                      value={onboardingForm.frequency || '3 Days / Week (Full Body)'}
+                      onChange={e => setOnboardingForm(p => ({ ...p, frequency: e.target.value }))}
+                      className="onboarding-select"
+                    >
+                      <option value="3 Days / Week (Full Body)">3 Days/Wk (Full Body)</option>
+                      <option value="4 Days / Week (Upper/Lower)">4 Days/Wk (Upper/Lower)</option>
+                      <option value="5 Days / Week (PPL Split)">5 Days/Wk (PPL Split)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Real-time Biometric Calculation Preview */}
+                {(() => {
+                  const a = Number(onboardingForm.age) || 22;
+                  const h = Number(onboardingForm.height) || 185;
+                  const w = Number(onboardingForm.startingWeight) || 75;
+                  const g = onboardingForm.goalType || 'Lean Bulk & Muscle Gain';
+                  const bmrCalc = 10 * w + 6.25 * h - 5 * a + 5;
+                  const tdeeCalc = Math.round(bmrCalc * 1.45);
+                  let kcalCalc = tdeeCalc;
+                  if (g.includes('Fat Loss')) kcalCalc = Math.max(1600, tdeeCalc - 450);
+                  else if (g.includes('Lean Bulk')) kcalCalc = tdeeCalc + 350;
+                  else if (g.includes('Strength')) kcalCalc = tdeeCalc + 200;
+                  const proCalc = Math.round(w * (g.includes('Fat Loss') ? 2.2 : 1.9));
+
+                  return (
+                    <div className="onboarding-biometrics-card">
+                      <div className="ob-title"><Sparkles size={14} color="var(--accent-primary)" /> Dynamic Biometric Projections</div>
+                      <div className="ob-grid">
+                        <div className="ob-stat"><span>Est. BMR</span><strong>{Math.round(bmrCalc)} <small>kcal</small></strong></div>
+                        <div className="ob-stat"><span>Daily Burn</span><strong>{tdeeCalc} <small>kcal</small></strong></div>
+                        <div className="ob-stat highlight"><span>Target Fuel</span><strong>{kcalCalc} <small>kcal</small></strong></div>
+                        <div className="ob-stat highlight"><span>Protein Target</span><strong>{proCalc} <small>g</small></strong></div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="onboarding-actions">
