@@ -38,13 +38,23 @@ import {
   LogIn,
   LogOut,
   Sparkles,
-  Scale
+  Scale,
+  Mail,
+  Lock
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
 import { programData } from './data/program';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth, loginWithGoogle, logoutUser, saveUserCloudData, loadUserCloudData } from './firebase';
+import { 
+  auth, 
+  loginWithGoogle, 
+  signUpWithEmail, 
+  loginWithEmail, 
+  logoutUser, 
+  saveUserCloudData, 
+  loadUserCloudData 
+} from './firebase';
 import './App.css';
 
 const flatRampWarmup = [
@@ -463,10 +473,43 @@ const App = () => {
     return () => clearTimeout(syncTimer);
   }, [currentUser, userProfile, workoutHistory, weightLogs, nutritionHistory, dailyStats, warmupCompleted, overloadLog, currentPhaseIdx]);
 
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+
   const handleGoogleLogin = async () => {
     const { user, error } = await loginWithGoogle();
     if (error) {
       alert("Sign-in note: " + error + "\nMake sure Google Sign-In is enabled in your Firebase console.");
+    } else {
+      setShowAuthModal(false);
+    }
+  };
+
+  const handleEmailAuth = async (e) => {
+    if (e) e.preventDefault();
+    if (!authEmail || !authPassword) {
+      setAuthError("Please enter both email and password.");
+      return;
+    }
+    setAuthError('');
+    setIsAuthSubmitting(true);
+    let res;
+    if (authMode === 'signup') {
+      res = await signUpWithEmail(authEmail, authPassword);
+    } else {
+      res = await loginWithEmail(authEmail, authPassword);
+    }
+    setIsAuthSubmitting(false);
+    if (res.error) {
+      setAuthError(res.error.replace("Firebase: ", ""));
+    } else {
+      setShowAuthModal(false);
+      setAuthEmail('');
+      setAuthPassword('');
     }
   };
 
@@ -938,9 +981,9 @@ const App = () => {
                 </button>
               </div>
             ) : (
-              <button onClick={handleGoogleLogin} className="btn-google-login">
-                <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>
-                <span>Sign In with Google</span>
+              <button onClick={() => setShowAuthModal(true)} className="btn-google-login">
+                <LogIn size={16} color="var(--accent-primary)" />
+                <span>Sign In / Create Account</span>
               </button>
             )}
           </div>
@@ -2039,6 +2082,83 @@ const App = () => {
               <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
                 <button className="modal-btn cancel" onClick={() => setShowOverloadModal(false)}>Cancel</button>
                 <button className="modal-btn confirm" onClick={handleLogOverload}>Save Log</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Authentication Modal (Google & Email/Password) */}
+      <AnimatePresence>
+        {showAuthModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="custom-modal-overlay"
+            style={{ zIndex: 99999 }}
+            onClick={() => setShowAuthModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="glass-card onboarding-modal"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="onboarding-badge-icon">
+                <LogIn size={28} color="var(--accent-primary)" />
+              </div>
+              <h3 className="onboarding-title">{authMode === 'login' ? 'Welcome Back' : 'Create V-FIT Account'}</h3>
+              <p className="onboarding-subtitle">Sync your workouts across all your devices in real-time</p>
+
+              {/* 1-Click Google Sign In */}
+              <button onClick={handleGoogleLogin} className="btn-google-login" style={{ marginBottom: '1.25rem' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>
+                <span>Continue with Google</span>
+              </button>
+
+              <div className="auth-divider">
+                <span>OR WITH EMAIL</span>
+              </div>
+
+              {authError && <div className="auth-error-banner">{authError}</div>}
+
+              <form onSubmit={handleEmailAuth} className="onboarding-fields" style={{ marginTop: '1rem' }}>
+                <div className="onboarding-field">
+                  <label>Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="you@gmail.com"
+                    value={authEmail}
+                    onChange={e => setAuthEmail(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="onboarding-field">
+                  <label>Password</label>
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={authPassword}
+                    onChange={e => setAuthPassword(e.target.value)}
+                    required
+                    minLength="6"
+                  />
+                </div>
+
+                <button type="submit" disabled={isAuthSubmitting} className="btn-onboarding-submit" style={{ marginTop: '0.75rem' }}>
+                  {isAuthSubmitting ? 'Authenticating...' : authMode === 'login' ? 'Sign In' : 'Create Account'}
+                </button>
+              </form>
+
+              <div className="auth-switch-text" style={{ marginTop: '1.25rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                {authMode === 'login' ? (
+                  <span>Don't have an account? <strong style={{ color: 'var(--accent-primary)', cursor: 'pointer' }} onClick={() => { setAuthMode('signup'); setAuthError(''); }}>Sign Up</strong></span>
+                ) : (
+                  <span>Already have an account? <strong style={{ color: 'var(--accent-primary)', cursor: 'pointer' }} onClick={() => { setAuthMode('login'); setAuthError(''); }}>Log In</strong></span>
+                )}
               </div>
             </motion.div>
           </motion.div>
