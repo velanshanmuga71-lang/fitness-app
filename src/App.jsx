@@ -156,14 +156,26 @@ const App = () => {
 
   const greeting = getGreeting();
 
+  // Custom Modal State
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [isResetSuccess, setIsResetSuccess] = useState(false);
+
   // Persistence states
   const [workoutHistory, setWorkoutHistory] = useState(() => {
-    return JSON.parse(localStorage.getItem('workoutHistory')) || {};
+    try {
+      return JSON.parse(localStorage.getItem('workoutHistory')) || {};
+    } catch (e) {
+      return {};
+    }
   });
 
   const [weightLogs, setWeightLogs] = useState(() => {
-    const existing = localStorage.getItem('weightLogs');
-    return existing ? JSON.parse(existing) : [{ date: new Date().toISOString().split('T')[0], weight: 75 }];
+    try {
+      const existing = localStorage.getItem('weightLogs');
+      const parsed = existing ? JSON.parse(existing) : null;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (e) {}
+    return [{ date: new Date().toISOString().split('T')[0], weight: 75 }];
   });
 
   // Biometric Scientific Nutrition Engine (Mifflin-St Jeor formula)
@@ -238,6 +250,20 @@ const App = () => {
   const [warmupCompleted, setWarmupCompleted] = useState(() => {
     return JSON.parse(localStorage.getItem('warmupCompleted')) || {};
   });
+
+  // Progressive Overload Log: { "ExerciseName": [{ date, reps, sets, note }] }
+  const [overloadLog, setOverloadLog] = useState(() => {
+    try {
+      const saved = localStorage.getItem('overloadLog');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+  const [showOverloadModal, setShowOverloadModal] = useState(false);
+  const [overloadTarget, setOverloadTarget] = useState(null); // { name, currentReps, currentSets }
+  const [overloadInput, setOverloadInput] = useState({ reps: '', sets: '', note: '' });
+
   const [activeExIdx, setActiveExIdx] = useState(0);
   const [activeSet, setActiveSet] = useState(1);
   const [timerRemaining, setTimerRemaining] = useState(0);
@@ -329,9 +355,7 @@ const App = () => {
   });
   const [aiInputText, setAiInputText] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('vfit_gemini_api_key') || '');
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [tempApiKeyInput, setTempApiKeyInput] = useState('');
+  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
   const handleSendAiMessage = async (customPrompt) => {
     const textToSend = (customPrompt || aiInputText).trim();
@@ -376,11 +400,9 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
         const data = await response.json();
         if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
           replyText = data.candidates[0].content.parts[0].text;
-        } else if (data.error) {
-          replyText = `⚠️ Gemini API note: ${data.error.message || 'Check your API key in AI settings.'}`;
         }
       } catch (err) {
-        console.warn("Gemini call failed, using heuristic coach:", err);
+        console.warn("AI generation note:", err);
       }
     }
 
@@ -408,8 +430,7 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
           `• Objective: **${userProfile.goalType || 'Lean Bulk & Muscle Gain'}**\n` +
           `• Trajectory: Current **${currentWeight}kg** ➔ Target **${userProfile.goalWeight || 85}kg**\n` +
           `• Daily Target: **${TARGET_KCAL} kcal** (${TARGET_PRO}g Protein)\n\n` +
-          `Stay consistent with today's sets! You can tap any suggestion pill below or ask about workout form, recovery, or diet.\n\n` +
-          `*(Want full live conversational AI? Add your free Google Gemini API key in the AI settings above).*`;
+          `Stay consistent with today's sets! You can tap any suggestion pill below or ask about workout form, recovery, or diet anytime.`;
       }
     }
 
@@ -802,13 +823,18 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
   };
 
 
-  const currentWeight = weightLogs[weightLogs.length - 1].weight;
-  const lastWeightDate = weightLogs[weightLogs.length - 1].date;
+  const latestWeightEntry = (Array.isArray(weightLogs) && weightLogs.length > 0)
+    ? weightLogs[weightLogs.length - 1]
+    : { date: todayDate, weight: Number(userProfile?.startingWeight) || 75 };
+  const currentWeight = Number(latestWeightEntry?.weight) || 75;
+  const lastWeightDate = latestWeightEntry?.date || todayDate;
   const isWeighInDue = (new Date() - new Date(lastWeightDate)) / (1000 * 60 * 60 * 24) >= 7;
 
   const getWorkoutByDay = (dateObj) => {
     const weekday = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-    const phase = programData.phases[currentPhaseIdx];
+    const phase = (programData?.phases && programData.phases[currentPhaseIdx])
+      ? programData.phases[currentPhaseIdx]
+      : (programData?.phases?.[0] || { id: 1, name: "Foundation", workouts: [] });
 
     if (phase.restDays && phase.restDays.includes(weekday)) {
       return {
@@ -850,7 +876,9 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
   });
 
   const tomorrowWorkout = getWorkoutByDay(tomorrowObj);
-  const currentPhase = programData.phases[currentPhaseIdx];
+  const currentPhase = (programData?.phases && programData.phases[currentPhaseIdx])
+    ? programData.phases[currentPhaseIdx]
+    : (programData?.phases?.[0] || { id: 1, name: "Foundation", weeks: "6 Weeks", months: "1-2", workouts: [] });
 
   // Calculate estimated time for today's workout
   const calculateWorkoutTime = (workout, phase) => {
@@ -2517,47 +2545,17 @@ Provide practical, encouraging, science-backed guidance. Format responses with s
                     <h3 style={{ margin: 0 }}>V-FIT AI Coach</h3>
                     <span className="ai-status-pill">
                       <span className="ai-pulse-dot" />
-                      {geminiApiKey ? 'Gemini 2.0 / 1.5 Flash' : 'Smart Fitness Engine'}
+                      Live AI Assistant
                     </span>
                   </div>
                 </div>
 
                 <div className="ai-header-actions">
-                  <button
-                    className="ai-btn-icon"
-                    onClick={() => { setTempApiKeyInput(geminiApiKey); setShowApiKeyModal(!showApiKeyModal); }}
-                    title="Gemini API Key Settings"
-                  >
-                    <Key size={18} color={geminiApiKey ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
-                  </button>
                   <button className="sheet-close" onClick={() => setShowAiCoach(false)}>
                     <X size={20} />
                   </button>
                 </div>
               </div>
-
-              {/* Gemini API Key Box */}
-              {showApiKeyModal && (
-                <div className="ai-apikey-box">
-                  <div className="ai-apikey-desc">
-                    <strong>Google Gemini Free API Key</strong>
-                    <p>Get a 100% free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)' }}>Google AI Studio</a> for unlimited conversational intelligence ($0, no credit card needed).</p>
-                  </div>
-                  <div className="ai-apikey-row">
-                    <input
-                      type="password"
-                      placeholder="Paste Gemini API Key here"
-                      value={tempApiKeyInput}
-                      onChange={e => setTempApiKeyInput(e.target.value)}
-                    />
-                    <button onClick={() => {
-                      setGeminiApiKey(tempApiKeyInput.trim());
-                      localStorage.setItem('vfit_gemini_api_key', tempApiKeyInput.trim());
-                      setShowApiKeyModal(false);
-                    }}>Save</button>
-                  </div>
-                </div>
-              )}
 
               {/* Active Context Banner */}
               <div className="ai-context-banner">
