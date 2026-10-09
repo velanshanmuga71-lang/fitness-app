@@ -49,6 +49,8 @@ import {
   Settings,
   Sliders,
   MessageSquare,
+  MessageSquareText,
+  ChevronDown,
   Mic,
   MicOff,
   Paperclip,
@@ -788,57 +790,138 @@ const App = () => {
     }
   }, []);
 
-  const announceVoice = async (text, onEnd) => {
-    try {
-      await TextToSpeech.stop();
-      await TextToSpeech.speak({
-        text: text,
-        lang: 'en-US',
-        rate: voiceRate,
-        pitch: voicePersona === 'female' ? 1.05 : voicePersona === 'energetic' ? 1.15 : 0.95,
-        volume: 1.0,
-        category: 'ambient',
-      });
+  const currentAudioRef = useRef(null);
+
+  const announceVoice = async (text, onEnd, customPersona = voicePersona) => {
+    // Immediately cancel any current audio playback or speech synthesis
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+
+    const cleanText = (text || '')
+      .replace(/[*#_~`•▸►→]/g, ' ')
+      .replace(/[^\w\s.,!?'’"-]/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!cleanText) {
       if (onEnd) onEnd();
-    } catch (e) {
-      if ('speechSynthesis' in window) {
-        const msg = new SpeechSynthesisUtterance();
-        msg.text = text;
-        msg.rate = voicePersona === 'energetic' ? 1.1 : voicePersona === 'calm' ? 0.85 : voiceRate;
-        msg.pitch = voicePersona === 'female' ? 1.05 : voicePersona === 'male' ? 0.9 : 1.0;
-        msg.volume = 1.0;
-        if (onEnd) {
-          msg.onend = () => onEnd();
-          msg.onerror = () => onEnd();
-        }
+      return;
+    }
 
-        window.speechSynthesis.cancel();
+    // Persona mapping to language/accents
+    const personaLangMap = {
+      maya: 'en',
+      female: 'en',
+      alex: 'en',
+      male: 'en',
+      jordan: 'en-GB',
+      kai: 'en-AU',
+      aarav: 'en-IN'
+    };
+    const ttsLang = personaLangMap[customPersona] || 'en';
 
-        const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
-        if (voices.length > 0) {
-          let chosenVoice = null;
-          if (voicePersona === 'male') {
-            chosenVoice = voices.find(v => (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david') || v.name.toLowerCase().includes('daniel') || v.name.toLowerCase().includes('guy') || v.name.toLowerCase().includes('george')) && v.lang.startsWith('en'));
-          } else {
-            chosenVoice = voices.find(v => (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('google us english') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('victoria') || v.name.toLowerCase().includes('jenny')) && v.lang.startsWith('en'));
-          }
-          if (chosenVoice) msg.voice = chosenVoice;
+    // Primary: Google Native Human Studio Audio Stream via /api/tts
+    const tryStudioAudio = () => {
+      return new Promise((resolve) => {
+        try {
+          const audioUrl = `/api/tts?text=${encodeURIComponent(cleanText.slice(0, 320))}&lang=${encodeURIComponent(ttsLang)}`;
+          const audio = new Audio(audioUrl);
+          currentAudioRef.current = audio;
+
+          audio.onended = () => {
+            currentAudioRef.current = null;
+            if (onEnd) onEnd();
+            resolve(true);
+          };
+
+          audio.onerror = () => {
+            currentAudioRef.current = null;
+            resolve(false);
+          };
+
+          audio.play().catch(() => resolve(false));
+        } catch (e) {
+          resolve(false);
         }
-        window.speechSynthesis.speak(msg);
-      } else if (onEnd) {
-        onEnd();
+      });
+    };
+
+    // Fallback: Browser Neural Natural Speech (strictly excluding robotic legacy synths)
+    const fallbackToNeural = () => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        if (onEnd) onEnd();
+        return;
       }
+
+      const msg = new SpeechSynthesisUtterance(cleanText);
+      msg.rate = 1.0;
+      msg.pitch = (customPersona === 'maya' || customPersona === 'female') ? 1.05 : 0.98;
+      msg.volume = 1.0;
+
+      if (onEnd) {
+        msg.onend = () => onEnd();
+        msg.onerror = () => onEnd();
+      }
+
+      const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const isRobotic = (v) => {
+          const n = (v.name || '').toLowerCase();
+          return n.includes('desktop') || n.includes('david') || n.includes('zira') || n.includes('mark') || n.includes('hazel') || n.includes('sapi');
+        };
+
+        const naturalVoices = voices.filter(v => {
+          if (isRobotic(v)) return false;
+          const n = (v.name || '').toLowerCase();
+          return n.includes('natural') || n.includes('neural') || n.includes('online') || n.includes('google') || n.includes('enhanced') || n.includes('premium') || n.includes('siri') || n.includes('ava');
+        });
+
+        const pool = naturalVoices.length > 0 ? naturalVoices : voices.filter(v => !isRobotic(v));
+
+        let picked = null;
+        if (customPersona === 'jordan') {
+          picked = pool.find(v => v.lang.startsWith('en-GB')) || pool[0];
+        } else if (customPersona === 'kai') {
+          picked = pool.find(v => v.lang.startsWith('en-AU')) || pool[0];
+        } else if (customPersona === 'aarav') {
+          picked = pool.find(v => v.lang.startsWith('en-IN')) || pool[0];
+        } else if (customPersona === 'alex' || customPersona === 'male') {
+          picked = pool.find(v => (v.name.toLowerCase().includes('guy') || v.name.toLowerCase().includes('eric') || v.name.toLowerCase().includes('christopher') || v.name.toLowerCase().includes('daniel') || v.name.toLowerCase().includes('male')) && v.lang.startsWith('en')) || pool.find(v => v.lang.startsWith('en'));
+        } else {
+          picked = pool.find(v => (v.name.toLowerCase().includes('jenny') || v.name.toLowerCase().includes('aria') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('ava') || v.name.toLowerCase().includes('google us') || v.name.toLowerCase().includes('female')) && v.lang.startsWith('en')) || pool.find(v => v.lang.startsWith('en'));
+        }
+
+        if (picked) msg.voice = picked;
+      }
+
+      window.speechSynthesis.speak(msg);
+    };
+
+    const played = await tryStudioAudio();
+    if (!played) {
+      fallbackToNeural();
     }
   };
 
   const handleTestVoice = (persona = voicePersona) => {
     const phrases = {
+      maya: "Hey champion! I'm Coach Maya. Ready to crush today's session?",
       female: "Hey champion! I'm Coach Maya. Ready to crush today's session?",
+      alex: "Let's lock in! Focus on clean form and dominate every set.",
       male: "Let's lock in! Focus on clean form and dominate every set.",
-      energetic: "Energy up! Three, two, one, let's smash this workout!",
-      calm: "Breathe deep, maintain controlled tempo, and build resilience."
+      jordan: "Right, let's keep the tempo controlled and maintain perfect form today.",
+      kai: "G'day! Time to get moving and smash those workout goals today!",
+      aarav: "Namaste! Focus with discipline, push each rep, and build strength."
     };
-    announceVoice(phrases[persona] || phrases.female);
+    announceVoice(phrases[persona] || phrases.maya, null, persona);
   };
 
   // AI Coach Assistant States & Multimodal Features
@@ -867,12 +950,24 @@ const App = () => {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
-  // Voice dictation & Live Voice states
+  // Voice dictation & ChatGPT-style Live Voice states
   const [isListening, setIsListening] = useState(false);
   const [isLiveVoiceActive, setIsLiveVoiceActive] = useState(false);
   const [liveVoiceStatus, setLiveVoiceStatus] = useState('idle'); // 'listening', 'thinking', 'speaking'
+  const [liveInterimTranscript, setLiveInterimTranscript] = useState('');
+  const [liveAiSpeechText, setLiveAiSpeechText] = useState('');
+  const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+  const [showLiveSubtitles, setShowLiveSubtitles] = useState(true);
+  const [showVoiceSelector, setShowVoiceSelector] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+
   const recognitionRef = useRef(null);
   const liveVoiceActiveRef = useRef(false);
+  const isVoiceMutedRef = useRef(false);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const animFrameRef = useRef(null);
 
   // Process & compress attachment files (images, pdfs, audio)
   const processAttachmentFile = async (file) => {
@@ -995,22 +1090,69 @@ const App = () => {
     }
   };
 
-  // Live Hands-Free Conversational Voice Loop
+  // Interrupt ongoing coach voice playback and resume listening immediately (ChatGPT style)
+  const handleInterruptVoice = () => {
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) {
+      setLiveVoiceStatus('listening');
+      setTimeout(() => {
+        if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) runLiveVoiceListen();
+      }, 150);
+    }
+  };
+
+  // Toggle Mute during Live Voice Session
+  const toggleVoiceMute = () => {
+    const nextMuted = !isVoiceMuted;
+    setIsVoiceMuted(nextMuted);
+    isVoiceMutedRef.current = nextMuted;
+    if (nextMuted) {
+      try { recognitionRef.current?.stop(); } catch (e) {}
+      if (currentAudioRef.current) {
+        try { currentAudioRef.current.pause(); } catch (e) {}
+      }
+      setLiveVoiceStatus('idle');
+    } else {
+      setLiveVoiceStatus('listening');
+      runLiveVoiceListen();
+    }
+  };
+
+  // Live Hands-Free Conversational Voice Loop (ChatGPT-Style Real-Time Subtitles)
   const runLiveVoiceListen = () => {
-    if (!liveVoiceActiveRef.current) return;
+    if (!liveVoiceActiveRef.current || isVoiceMutedRef.current) return;
     const recognition = initSpeechRecognition();
     if (!recognition) return;
     recognitionRef.current = recognition;
 
     recognition.onstart = () => {
-      if (liveVoiceActiveRef.current) setLiveVoiceStatus('listening');
+      if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) {
+        setLiveVoiceStatus('listening');
+      }
     };
 
-    let finalTranscript = '';
+    let accumulatedFinal = '';
     recognition.onresult = (event) => {
-      for (let i = 0; i < event.results.length; i++) {
-        finalTranscript += event.results[i][0].transcript;
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          accumulatedFinal += transcript;
+        } else {
+          interim += transcript;
+        }
       }
+      const currentLive = accumulatedFinal || interim;
+      if (currentLive) setLiveInterimTranscript(currentLive);
     };
 
     recognition.onerror = (e) => {
@@ -1020,15 +1162,15 @@ const App = () => {
     };
 
     recognition.onend = async () => {
-      if (!liveVoiceActiveRef.current) return;
-      const query = finalTranscript.trim();
+      if (!liveVoiceActiveRef.current || isVoiceMutedRef.current) return;
+      const query = (accumulatedFinal || liveInterimTranscript).trim();
       if (query) {
         setLiveVoiceStatus('thinking');
         await handleSendAiMessage(query, null, true);
       } else {
         setTimeout(() => {
-          if (liveVoiceActiveRef.current) runLiveVoiceListen();
-        }, 350);
+          if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) runLiveVoiceListen();
+        }, 250);
       }
     };
 
@@ -1048,7 +1190,43 @@ const App = () => {
 
     setIsLiveVoiceActive(true);
     liveVoiceActiveRef.current = true;
+    setIsVoiceMuted(false);
+    isVoiceMutedRef.current = false;
     setLiveVoiceStatus('listening');
+    setLiveInterimTranscript('');
+    setLiveAiSpeechText('');
+
+    // Start Web Audio API Volume Analyzer for real-time visual orb wave reactiveness
+    try {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        micStreamRef.current = stream;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          audioContextRef.current = audioCtx;
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          const src = audioCtx.createMediaStreamSource(stream);
+          src.connect(analyser);
+          analyserRef.current = analyser;
+
+          const dataArr = new Uint8Array(analyser.frequencyBinCount);
+          const checkVolume = () => {
+            if (!liveVoiceActiveRef.current) return;
+            analyser.getByteFrequencyData(dataArr);
+            let sum = 0;
+            for (let i = 0; i < dataArr.length; i++) sum += dataArr[i];
+            const avg = sum / dataArr.length;
+            setMicVolume(Math.min(1, avg / 85));
+            animFrameRef.current = requestAnimationFrame(checkVolume);
+          };
+          checkVolume();
+        }
+      }).catch((err) => {
+        console.warn("Microphone visualizer stream notice:", err);
+      });
+    } catch (e) {}
+
     runLiveVoiceListen();
   };
 
@@ -1056,8 +1234,28 @@ const App = () => {
     liveVoiceActiveRef.current = false;
     setIsLiveVoiceActive(false);
     setLiveVoiceStatus('idle');
+    setLiveInterimTranscript('');
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch (e) {}
+      audioContextRef.current = null;
+    }
+    setMicVolume(0);
+
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
+    }
+    if (currentAudioRef.current) {
+      try { currentAudioRef.current.pause(); } catch (e) {}
+      currentAudioRef.current = null;
     }
     if ('speechSynthesis' in window) {
       try { window.speechSynthesis.cancel(); } catch (e) {}
@@ -1088,7 +1286,16 @@ const App = () => {
     setIsAiThinking(true);
 
     const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
-    const systemPrompt = `You are V-FIT AI Coach, an elite strength and conditioning specialist and sports nutritionist.
+    const isLiveConvo = isVoiceMode || liveVoiceActiveRef.current;
+    const systemPrompt = isLiveConvo
+      ? `You are V-FIT AI Coach in a real-time live phone call with ${userProfile.name || 'Athlete'} (ChatGPT Voice Mode).
+Athlete Profile: ${currentWeight}kg -> Target ${userProfile.goalWeight || 85}kg (${userProfile.goalType || 'Lean Bulk'}), Today's Workout: ${currentWorkout.name}.
+VOICE CONVERSATION RULES:
+1. Respond in 1 to 2 spoken sentences ONLY (maximum 30 words).
+2. Talk naturally with human enthusiasm like a supportive personal coach talking on the phone.
+3. NEVER use bullet points, asterisks (**), hashtags, numbered lists, or markdown formatting.
+4. Give punchy, actionable advice.`
+      : `You are V-FIT AI Coach, an elite strength and conditioning specialist and sports nutritionist.
 Athlete Profile:
 - Name: ${userProfile.name || 'Athlete'}
 - Age: ${userProfile.age || 22}, Height: ${userProfile.height || 185}cm
@@ -1214,13 +1421,14 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
     // If in Live Voice Session, speak response and loop back to listen
     if (isVoiceMode || liveVoiceActiveRef.current) {
       setLiveVoiceStatus('speaking');
-      const cleanVoiceText = replyText.replace(/[*#_•▸]/g, '').slice(0, 300);
+      const cleanVoiceText = replyText.replace(/[*#_•▸►→]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+      setLiveAiSpeechText(cleanVoiceText);
       announceVoice(cleanVoiceText, () => {
-        if (liveVoiceActiveRef.current) {
+        if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) {
           setLiveVoiceStatus('listening');
           setTimeout(() => {
-            if (liveVoiceActiveRef.current) runLiveVoiceListen();
-          }, 350);
+            if (liveVoiceActiveRef.current && !isVoiceMutedRef.current) runLiveVoiceListen();
+          }, 250);
         }
       });
     }
@@ -3252,32 +3460,39 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                       </div>
                       <div className="voice-personas-grid">
                         <div 
-                          className={`vp-item ${voicePersona === 'female' ? 'active' : ''}`}
-                          onClick={() => { setVoicePersona('female'); handleTestVoice('female'); }}
+                          className={`vp-item ${voicePersona === 'maya' || voicePersona === 'female' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('maya'); handleTestVoice('maya'); }}
                         >
                           <strong>👩 Maya</strong>
-                          <small>Natural</small>
+                          <small>US Natural</small>
                         </div>
                         <div 
-                          className={`vp-item ${voicePersona === 'male' ? 'active' : ''}`}
-                          onClick={() => { setVoicePersona('male'); handleTestVoice('male'); }}
+                          className={`vp-item ${voicePersona === 'alex' || voicePersona === 'male' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('alex'); handleTestVoice('alex'); }}
                         >
                           <strong>👨 Alex</strong>
-                          <small>Focused</small>
+                          <small>US Athletic</small>
                         </div>
                         <div 
-                          className={`vp-item ${voicePersona === 'energetic' ? 'active' : ''}`}
-                          onClick={() => { setVoicePersona('energetic'); handleTestVoice('energetic'); }}
+                          className={`vp-item ${voicePersona === 'jordan' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('jordan'); handleTestVoice('jordan'); }}
                         >
-                          <strong>⚡ Energy</strong>
-                          <small>Upbeat</small>
+                          <strong>🇬🇧 Jordan</strong>
+                          <small>UK British</small>
                         </div>
                         <div 
-                          className={`vp-item ${voicePersona === 'calm' ? 'active' : ''}`}
-                          onClick={() => { setVoicePersona('calm'); handleTestVoice('calm'); }}
+                          className={`vp-item ${voicePersona === 'kai' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('kai'); handleTestVoice('kai'); }}
                         >
-                          <strong>🧘 Zen</strong>
-                          <small>Controlled</small>
+                          <strong>🇦🇺 Kai</strong>
+                          <small>AU Aussie</small>
+                        </div>
+                        <div 
+                          className={`vp-item ${voicePersona === 'aarav' ? 'active' : ''}`}
+                          onClick={() => { setVoicePersona('aarav'); handleTestVoice('aarav'); }}
+                        >
+                          <strong>🇮🇳 Aarav</strong>
+                          <small>IN Native</small>
                         </div>
                       </div>
                     </div>
@@ -3469,38 +3684,188 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                 </div>
               </div>
 
-              {/* Live Conversational Voice Session Panel */}
+              {/* ChatGPT-Style Immersive Live Voice Mode Interface */}
               {isLiveVoiceActive && (
-                <div className="live-voice-panel">
-                  <div className="live-orb-container">
-                    <div className={`live-orb ${liveVoiceStatus}`} />
-                  </div>
-                  <div className="live-voice-status">
-                    {liveVoiceStatus === 'listening' && '🎙️ Listening to you... Speak anytime'}
-                    {liveVoiceStatus === 'thinking' && '⚡ Coach is thinking...'}
-                    {liveVoiceStatus === 'speaking' && '🔊 Coach is speaking...'}
-                    {liveVoiceStatus === 'idle' && 'Tap below to speak'}
-                  </div>
-                  <div className="live-voice-actions">
+                <div className="chatgpt-voice-overlay">
+                  {/* Atmospheric Glow */}
+                  <div className={`chatgpt-ambient-glow ${isVoiceMuted ? 'muted' : liveVoiceStatus}`} />
+
+                  {/* Header */}
+                  <div className="chatgpt-voice-header">
                     <button
-                      className="btn-voice-ctrl"
-                      onClick={() => {
-                        if (liveVoiceStatus === 'listening') {
-                          try { recognitionRef.current?.stop(); } catch(e){}
-                          setLiveVoiceStatus('idle');
-                        } else {
-                          runLiveVoiceListen();
-                        }
-                      }}
+                      className="chatgpt-icon-btn"
+                      onClick={() => stopLiveVoiceSession()}
+                      title="Return to Chat"
                     >
-                      {liveVoiceStatus === 'listening' ? <MicOff size={14} /> : <Mic size={14} />}
-                      <span>{liveVoiceStatus === 'listening' ? 'Mute' : 'Speak'}</span>
+                      <ChevronDown size={22} />
                     </button>
-                    <button className="btn-voice-ctrl end" onClick={stopLiveVoiceSession}>
-                      <PhoneOff size={14} />
-                      <span>End Call</span>
+
+                    <div className="chatgpt-header-pill" onClick={() => setShowVoiceSelector(true)}>
+                      <span className={`chatgpt-status-dot ${isVoiceMuted ? 'muted' : liveVoiceStatus}`} />
+                      <span className="chatgpt-coach-name">
+                        {voicePersona === 'maya' || voicePersona === 'female' ? 'Coach Maya' :
+                         voicePersona === 'alex' || voicePersona === 'male' ? 'Coach Alex' :
+                         voicePersona === 'jordan' ? 'Coach Jordan' :
+                         voicePersona === 'kai' ? 'Coach Kai' : 'Coach Aarav'}
+                      </span>
+                      <span className="chatgpt-status-sub">
+                        {isVoiceMuted ? '• Muted' :
+                         liveVoiceStatus === 'listening' ? '• Listening' :
+                         liveVoiceStatus === 'thinking' ? '• Thinking...' :
+                         liveVoiceStatus === 'speaking' ? '• Speaking' : '• Ready'}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className={`chatgpt-icon-btn ${showLiveSubtitles ? 'active' : ''}`}
+                        onClick={() => setShowLiveSubtitles(!showLiveSubtitles)}
+                        title="Toggle Captions"
+                      >
+                        <MessageSquareText size={18} />
+                      </button>
+                      <button
+                        className="chatgpt-icon-btn"
+                        onClick={() => setShowVoiceSelector(true)}
+                        title="Voice Settings"
+                      >
+                        <Volume2 size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Center Stage & Organic Liquid Orb */}
+                  <div
+                    className="chatgpt-voice-stage"
+                    onClick={() => {
+                      if (liveVoiceStatus === 'speaking') {
+                        handleInterruptVoice();
+                      }
+                    }}
+                  >
+                    <div className="chatgpt-orb-container">
+                      <div className={`chatgpt-wave-ring ring-1 ${liveVoiceStatus}`} />
+                      <div className={`chatgpt-wave-ring ring-2 ${liveVoiceStatus}`} />
+                      <div className={`chatgpt-wave-ring ring-3 ${liveVoiceStatus}`} />
+
+                      <div
+                        className={`chatgpt-liquid-orb ${isVoiceMuted ? 'muted' : liveVoiceStatus}`}
+                        style={{
+                          transform: liveVoiceStatus === 'listening' && micVolume > 0.04
+                            ? `scale(${1 + micVolume * 0.4})`
+                            : undefined
+                        }}
+                      />
+                    </div>
+
+                    {liveVoiceStatus === 'speaking' && (
+                      <div className="chatgpt-interrupt-pill">
+                        <Sparkles size={13} />
+                        <span>Tap orb to interrupt</span>
+                      </div>
+                    )}
+
+                    {showLiveSubtitles && (
+                      <div className="chatgpt-captions-container">
+                        {liveVoiceStatus === 'listening' && (
+                          <div className="chatgpt-user-speech-caption">
+                            {liveInterimTranscript ? `“${liveInterimTranscript}”` : "Listening... speak anytime"}
+                          </div>
+                        )}
+                        {liveVoiceStatus === 'thinking' && (
+                          <div className="chatgpt-idle-caption">
+                            ⚡ Formulating coach advice...
+                          </div>
+                        )}
+                        {liveVoiceStatus === 'speaking' && (
+                          <div className="chatgpt-ai-speech-caption">
+                            {liveAiSpeechText}
+                          </div>
+                        )}
+                        {liveVoiceStatus === 'idle' && (
+                          <div className="chatgpt-idle-caption">
+                            {isVoiceMuted ? 'Microphone muted. Tap mic to resume.' : 'Ready. Ask your coach anything.'}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Floating Frosted Bottom Dock */}
+                  <div className="chatgpt-voice-dock">
+                    <button
+                      className={`chatgpt-dock-btn ${isVoiceMuted ? 'active-muted' : ''}`}
+                      onClick={toggleVoiceMute}
+                      title={isVoiceMuted ? "Unmute Microphone" : "Mute Microphone"}
+                    >
+                      {isVoiceMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                    </button>
+
+                    <button
+                      className="chatgpt-dock-btn end-call"
+                      onClick={stopLiveVoiceSession}
+                      title="End Session"
+                    >
+                      <PhoneOff size={22} />
+                    </button>
+
+                    <button
+                      className="chatgpt-dock-btn"
+                      onClick={() => setShowVoiceSelector(true)}
+                      title="Select Voice"
+                    >
+                      <Sliders size={20} />
                     </button>
                   </div>
+
+                  {/* Voice Persona Drawer */}
+                  {showVoiceSelector && (
+                    <div className="voice-persona-modal-backdrop" onClick={() => setShowVoiceSelector(false)}>
+                      <div className="voice-persona-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#fff' }}>AI Coach Voice</h3>
+                          <button className="chatgpt-icon-btn" onClick={() => setShowVoiceSelector(false)} style={{ width: 32, height: 32 }}>
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {[
+                            { id: 'maya', name: 'Coach Maya', desc: 'Warm, natural & inspiring (US)', gender: 'female' },
+                            { id: 'alex', name: 'Coach Alex', desc: 'Athletic, high-energy & motivating (US)', gender: 'male' },
+                            { id: 'jordan', name: 'Coach Jordan', desc: 'Crisp, technical & focused (UK)', gender: 'neutral' },
+                            { id: 'kai', name: 'Coach Kai', desc: 'Upbeat, friendly & encouraging (AU)', gender: 'male' },
+                            { id: 'aarav', name: 'Coach Aarav', desc: 'Driven, dedicated & direct (IN)', gender: 'male' },
+                          ].map(p => (
+                            <div
+                              key={p.id}
+                              className={`persona-option-item ${voicePersona === p.id || (voicePersona === 'female' && p.id === 'maya') || (voicePersona === 'male' && p.id === 'alex') ? 'selected' : ''}`}
+                              onClick={() => {
+                                setVoicePersona(p.id);
+                                handleTestVoice(p.id);
+                              }}
+                            >
+                              <div>
+                                <div className="persona-meta-title">{p.name}</div>
+                                <div className="persona-meta-desc">{p.desc}</div>
+                              </div>
+                              <button
+                                className="persona-test-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setVoicePersona(p.id);
+                                  handleTestVoice(p.id);
+                                }}
+                              >
+                                <Volume2 size={13} style={{ display: 'inline', marginRight: 4, verticalAlign: -2 }} />
+                                Preview
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
