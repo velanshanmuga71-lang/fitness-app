@@ -482,9 +482,16 @@ const App = () => {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
 
   const handleGoogleLogin = async () => {
+    setAuthError('');
+    setIsAuthSubmitting(true);
     const { user, error } = await loginWithGoogle();
+    setIsAuthSubmitting(false);
     if (error) {
-      alert("Sign-in note: " + error + "\nMake sure Google Sign-In is enabled in your Firebase console.");
+      if (error.includes('unauthorized-domain')) {
+        setAuthError('Domain not authorized yet. Please add "fitness-app-five-cyan.vercel.app" to Authorized Domains in your Firebase Console (Authentication > Settings > Authorized Domains).');
+      } else {
+        setAuthError(error.replace("Firebase: ", ""));
+      }
     } else {
       setShowAuthModal(false);
     }
