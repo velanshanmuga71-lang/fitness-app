@@ -726,10 +726,20 @@ const App = () => {
   const TARGET_CARB = customProgram?.dailyCarbsGrams || dynamicNutrition.carb;
   const TARGET_FAT = customProgram?.dailyFatGrams || dynamicNutrition.fat;
   const [nutritionHistory, setNutritionHistory] = useState(() => {
-    return JSON.parse(localStorage.getItem('nutritionHistory')) || {};
+    try {
+      const saved = localStorage.getItem('nutritionHistory');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
   const [dailyStats, setDailyStats] = useState(() => {
-    return JSON.parse(localStorage.getItem('dailyStats')) || {};
+    try {
+      const saved = localStorage.getItem('dailyStats');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
 
   const [showWeightInput, setShowWeightInput] = useState(false);
@@ -749,7 +759,12 @@ const App = () => {
   const [activeWarmupIdx, setActiveWarmupIdx] = useState(0);
   const [completedExercises, setCompletedExercises] = useState([]);
   const [warmupCompleted, setWarmupCompleted] = useState(() => {
-    return JSON.parse(localStorage.getItem('warmupCompleted')) || {};
+    try {
+      const saved = localStorage.getItem('warmupCompleted');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
 
   // Progressive Overload Log: { "ExerciseName": [{ date, reps, sets, note }] }
@@ -1626,68 +1641,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
     }
   };
 
-  // Automatically sync Hold Timer when active exercise changes or a new set begins
-  useEffect(() => {
-    if (!isWorkoutActive || isResting || !currentWorkout?.exercises?.[activeExIdx]) {
-      setIsHoldTimerRunning(false);
-      setHoldTimeTotal(0);
-      setHoldTimeRemaining(0);
-      return;
-    }
-    const currentEx = currentWorkout.exercises[activeExIdx];
-    const duration = getExerciseHoldDuration(currentEx);
-    if (duration > 0) {
-      setHoldTimeTotal(duration);
-      setHoldTimeRemaining(duration);
-      setIsHoldTimerRunning(false);
-    } else {
-      setHoldTimeTotal(0);
-      setHoldTimeRemaining(0);
-      setIsHoldTimerRunning(false);
-    }
-  }, [isWorkoutActive, isResting, activeExIdx, activeSet, currentWorkout]);
 
-  // Hold Timer countdown interval with 3-2-1 voice countdown and auto-transition to rest
-  useEffect(() => {
-    let interval;
-    if (isHoldTimerRunning && holdTimeRemaining > 0 && !isResting && isWorkoutActive) {
-      interval = setInterval(() => {
-        setHoldTimeRemaining(prev => {
-          if (prev === 4) announceVoice("3");
-          if (prev === 3) announceVoice("2");
-          if (prev === 2) announceVoice("1");
-
-          if (prev <= 1) {
-            playNotification('end');
-            announceVoice("Time's up! Great hold. Take your rest.");
-            setIsHoldTimerRunning(false);
-            setTimeout(() => {
-              handleFinishSet();
-            }, 100);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isHoldTimerRunning, holdTimeRemaining, isResting, isWorkoutActive, activeExIdx, activeSet, currentWorkout]);
-
-  const handleStartHoldTimer = () => {
-    setIsHoldTimerRunning(true);
-    playNotification('start');
-    announceVoice("Hold!");
-  };
-
-  const handlePauseHoldTimer = () => {
-    setIsHoldTimerRunning(false);
-    announceVoice("Paused");
-  };
-
-  const handleResetHoldTimer = () => {
-    setIsHoldTimerRunning(false);
-    setHoldTimeRemaining(holdTimeTotal);
-  };
 
   // Save to localStorage
   useEffect(() => { localStorage.setItem('currentPhaseIdx', currentPhaseIdx); }, [currentPhaseIdx]);
@@ -2040,6 +1994,69 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
   }, []);
 
   const workoutTime = calculateWorkoutTime(currentWorkout, currentPhase);
+
+  // Automatically sync Hold Timer when active exercise changes or a new set begins
+  useEffect(() => {
+    if (!isWorkoutActive || isResting || !currentWorkout?.exercises?.[activeExIdx]) {
+      setIsHoldTimerRunning(false);
+      setHoldTimeTotal(0);
+      setHoldTimeRemaining(0);
+      return;
+    }
+    const currentEx = currentWorkout.exercises[activeExIdx];
+    const duration = getExerciseHoldDuration(currentEx);
+    if (duration > 0) {
+      setHoldTimeTotal(duration);
+      setHoldTimeRemaining(duration);
+      setIsHoldTimerRunning(false);
+    } else {
+      setHoldTimeTotal(0);
+      setHoldTimeRemaining(0);
+      setIsHoldTimerRunning(false);
+    }
+  }, [isWorkoutActive, isResting, activeExIdx, activeSet, currentWorkout]);
+
+  // Hold Timer countdown interval with 3-2-1 voice countdown and auto-transition to rest
+  useEffect(() => {
+    let interval;
+    if (isHoldTimerRunning && holdTimeRemaining > 0 && !isResting && isWorkoutActive) {
+      interval = setInterval(() => {
+        setHoldTimeRemaining(prev => {
+          if (prev === 4) announceVoice("3");
+          if (prev === 3) announceVoice("2");
+          if (prev === 2) announceVoice("1");
+
+          if (prev <= 1) {
+            playNotification('end');
+            announceVoice("Time's up! Great hold. Take your rest.");
+            setIsHoldTimerRunning(false);
+            setTimeout(() => {
+              handleFinishSet();
+            }, 100);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isHoldTimerRunning, holdTimeRemaining, isResting, isWorkoutActive, activeExIdx, activeSet, currentWorkout]);
+
+  const handleStartHoldTimer = () => {
+    setIsHoldTimerRunning(true);
+    playNotification('start');
+    announceVoice("Hold!");
+  };
+
+  const handlePauseHoldTimer = () => {
+    setIsHoldTimerRunning(false);
+    announceVoice("Paused");
+  };
+
+  const handleResetHoldTimer = () => {
+    setIsHoldTimerRunning(false);
+    setHoldTimeRemaining(holdTimeTotal);
+  };
 
   // Advanced Progress Calculation: Filter logs by current phase ID
   const getSessionsForPhase = (pId) => {
