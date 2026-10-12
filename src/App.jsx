@@ -57,7 +57,9 @@ import {
   FileText,
   Phone,
   PhoneOff,
-  Radio
+  Radio,
+  Play,
+  Pause
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -768,6 +770,36 @@ const App = () => {
   const [timerRemaining, setTimerRemaining] = useState(0);
   const [isResting, setIsResting] = useState(false);
   const [timerTotal, setTimerTotal] = useState(0);
+
+  // Isometric / Timed Hold Exercise States
+  const [isHoldTimerRunning, setIsHoldTimerRunning] = useState(false);
+  const [holdTimeRemaining, setHoldTimeRemaining] = useState(0);
+  const [holdTimeTotal, setHoldTimeTotal] = useState(0);
+
+  const getExerciseHoldDuration = (exercise) => {
+    if (!exercise) return 0;
+    if (exercise.type === 'timer' && exercise.duration) return Number(exercise.duration);
+    const repsStr = String(exercise.reps || '').toLowerCase();
+    const nameStr = String(exercise.name || '').toLowerCase();
+    
+    // Repetition-based with note (e.g., "10 reps (3s hold)") should not trigger the continuous hold timer
+    if (repsStr.includes('rep')) {
+      return 0;
+    }
+    
+    if (repsStr.includes('s') || repsStr.includes('sec')) {
+      const matches = repsStr.match(/\d+/g);
+      if (matches && matches.length > 0) {
+        return Math.max(...matches.map(Number));
+      }
+    }
+    if (nameStr.includes('plank') || nameStr.includes('hollow body') || nameStr.includes('wall sit')) {
+      const matches = repsStr.match(/\d+/g);
+      if (matches && matches.length > 0) return Math.max(...matches.map(Number));
+      return 60;
+    }
+    return 0;
+  };
 
   // Voice Coach Personas & Audio Settings
   const [voicePersona, setVoicePersona] = useState(() => localStorage.getItem('vfit_voice_persona') || 'female');
@@ -1559,6 +1591,8 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
   };
 
   const handleFinishSet = () => {
+    setIsHoldTimerRunning(false);
+
     const exercise = currentWorkout.exercises[activeExIdx];
 
     if (activeSet < exercise.sets) {
@@ -1590,6 +1624,69 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
         announceVoice("Workout complete! Great job today.");
       }
     }
+  };
+
+  // Automatically sync Hold Timer when active exercise changes or a new set begins
+  useEffect(() => {
+    if (!isWorkoutActive || isResting || !currentWorkout?.exercises?.[activeExIdx]) {
+      setIsHoldTimerRunning(false);
+      setHoldTimeTotal(0);
+      setHoldTimeRemaining(0);
+      return;
+    }
+    const currentEx = currentWorkout.exercises[activeExIdx];
+    const duration = getExerciseHoldDuration(currentEx);
+    if (duration > 0) {
+      setHoldTimeTotal(duration);
+      setHoldTimeRemaining(duration);
+      setIsHoldTimerRunning(false);
+    } else {
+      setHoldTimeTotal(0);
+      setHoldTimeRemaining(0);
+      setIsHoldTimerRunning(false);
+    }
+  }, [isWorkoutActive, isResting, activeExIdx, activeSet, currentWorkout]);
+
+  // Hold Timer countdown interval with 3-2-1 voice countdown and auto-transition to rest
+  useEffect(() => {
+    let interval;
+    if (isHoldTimerRunning && holdTimeRemaining > 0 && !isResting && isWorkoutActive) {
+      interval = setInterval(() => {
+        setHoldTimeRemaining(prev => {
+          if (prev === 4) announceVoice("3");
+          if (prev === 3) announceVoice("2");
+          if (prev === 2) announceVoice("1");
+
+          if (prev <= 1) {
+            playNotification('end');
+            announceVoice("Time's up! Great hold. Take your rest.");
+            setIsHoldTimerRunning(false);
+            setTimeout(() => {
+              handleFinishSet();
+            }, 100);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isHoldTimerRunning, holdTimeRemaining, isResting, isWorkoutActive, activeExIdx, activeSet, currentWorkout]);
+
+  const handleStartHoldTimer = () => {
+    setIsHoldTimerRunning(true);
+    playNotification('start');
+    announceVoice("Hold!");
+  };
+
+  const handlePauseHoldTimer = () => {
+    setIsHoldTimerRunning(false);
+    announceVoice("Paused");
+  };
+
+  const handleResetHoldTimer = () => {
+    setIsHoldTimerRunning(false);
+    setHoldTimeRemaining(holdTimeTotal);
   };
 
   // Save to localStorage
@@ -3039,17 +3136,23 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                       <div className="visual-stats-overlay">
                         <div className="stats-glass-card">
                           <div className="stat-item-premium">
-                            <div className="stat-icon-box"><Clock size={18} /></div>
+                            <div className="stat-icon-box"><Clock size={18} color={holdTimeTotal > 0 ? "var(--accent-primary)" : "currentColor"} /></div>
                             <div className="stat-text-group">
-                              <span className="stat-label-mini">Time Left</span>
-                              <span className="stat-value-mini">{currentWorkout.exercises[activeExIdx].restTime}s</span>
+                              <span className="stat-label-mini">
+                                {holdTimeTotal > 0 ? (isHoldTimerRunning ? "Holding" : "Target Hold") : "Rest Time"}
+                              </span>
+                              <span className="stat-value-mini">
+                                {holdTimeTotal > 0 ? (isHoldTimerRunning ? `${holdTimeRemaining}s` : `${holdTimeTotal}s`) : `${currentWorkout.exercises[activeExIdx].restTime}s`}
+                              </span>
                             </div>
                           </div>
                           <div className="stat-item-premium">
                             <div className="stat-icon-box"><Target size={18} color="#ef4444" /></div>
                             <div className="stat-text-group">
-                              <span className="stat-label-mini">Burn Mode</span>
-                              <span className="stat-value-mini">{currentWorkout.exercises[activeExIdx].reps} Reps</span>
+                              <span className="stat-label-mini">{holdTimeTotal > 0 ? "Target Duration" : "Burn Mode"}</span>
+                              <span className="stat-value-mini">
+                                {holdTimeTotal > 0 ? `${holdTimeTotal}s Hold` : `${currentWorkout.exercises[activeExIdx].reps} Reps`}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -3058,6 +3161,47 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
 
                     <div className="session-info-section" style={{ marginTop: '2.5rem', marginBottom: '8rem' }}>
                       <h2 className="session-main-title">{currentWorkout.exercises[activeExIdx].name}</h2>
+
+                      {/* Interactive Work Hold Timer (Plank, Hollow Body, Isometric Holds) */}
+                      {holdTimeTotal > 0 && (
+                        <div className="workout-hold-timer-card">
+                          <div className="hold-timer-radial">
+                            <svg className="hold-timer-svg" width="160" height="160" viewBox="0 0 160 160">
+                              <circle className="hold-timer-bg" cx="80" cy="80" r="70" />
+                              <motion.circle
+                                className="hold-timer-progress"
+                                cx="80" cy="80" r="70"
+                                strokeDasharray={2 * Math.PI * 70}
+                                animate={{ strokeDashoffset: (1 - (holdTimeRemaining / (holdTimeTotal || 1))) * (2 * Math.PI * 70) }}
+                                transition={{ duration: 1, ease: 'linear' }}
+                              />
+                            </svg>
+                            <div className="hold-timer-center">
+                              <span className="hold-timer-number">{holdTimeRemaining}</span>
+                              <span className="hold-timer-label">{isHoldTimerRunning ? "HOLDING" : "SECONDS"}</span>
+                            </div>
+                          </div>
+
+                          <div className="hold-timer-controls">
+                            {!isHoldTimerRunning ? (
+                              <button className="btn-hold-action btn-hold-start" onClick={handleStartHoldTimer}>
+                                <Play size={18} style={{ fill: 'currentColor' }} />
+                                <span>{holdTimeRemaining === holdTimeTotal ? `Start Hold (${holdTimeTotal}s)` : "Resume Hold"}</span>
+                              </button>
+                            ) : (
+                              <button className="btn-hold-action btn-hold-pause" onClick={handlePauseHoldTimer}>
+                                <Pause size={18} style={{ fill: 'currentColor' }} />
+                                <span>Pause Hold</span>
+                              </button>
+                            )}
+                            {holdTimeRemaining < holdTimeTotal && (
+                              <button className="btn-hold-reset" onClick={handleResetHoldTimer} title="Reset hold timer">
+                                <RotateCcw size={16} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       <p className="session-description-text">
                         {currentWorkout.exercises[activeExIdx].focus}
                       </p>
@@ -3086,7 +3230,9 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
 
                     <div className="session-actions-sticky" style={{ paddingLeft: 0, paddingRight: 0 }}>
                       <button className="btn-complete-premium" onClick={handleFinishSet}>
-                        Complete Set {activeSet} <ArrowRight size={20} style={{ marginLeft: '8px' }} />
+                        {holdTimeTotal > 0
+                          ? (isHoldTimerRunning ? `Finish Hold Early (Set ${activeSet})` : `Complete Set ${activeSet}`)
+                          : `Complete Set ${activeSet}`} <ArrowRight size={20} style={{ marginLeft: '8px' }} />
                       </button>
                     </div>
                   </motion.div>
