@@ -1372,32 +1372,24 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
 
     let replyText = '';
 
-    // ── Build conversation history for multi-turn memory ──────────────────────
-    // We send the system context as the very first user turn (Gemini requirement),
-    // then replay the last N exchanges (max 8 pairs = 16 messages), and finally
-    // append the current user question. This gives the model full conversation memory.
-    const MAX_HISTORY_PAIRS = 8;
+    // ── Build conversation history (keep last 4 pairs = 8 messages max) ────────
+    const MAX_HISTORY_PAIRS = 4;
     const historyForApi = [];
-
-    // Prior exchange messages (exclude the brand-new userMsg we just pushed)
-    const priorMessages = newHistory.slice(0, -1); // all but the last (current user msg)
-    // Take only the last MAX_HISTORY_PAIRS*2 messages (pairs of user+assistant)
+    const priorMessages = newHistory.slice(0, -1);
     const trimmedHistory = priorMessages.slice(-(MAX_HISTORY_PAIRS * 2));
 
-    // Convert stored chat messages into Gemini multi-turn format
     trimmedHistory.forEach(m => {
       if (m.role === 'user') {
-        const msgParts = [];
-        if (m.text) msgParts.push({ text: m.text });
-        historyForApi.push({ role: 'user', parts: msgParts.length > 0 ? msgParts : [{ text: '...' }] });
-      } else if (m.role === 'assistant') {
-        if (m.text) {
-          historyForApi.push({ role: 'model', parts: [{ text: m.text }] });
-        }
+        const msgParts = m.text ? [{ text: m.text }] : [{ text: '...' }];
+        historyForApi.push({ role: 'user', parts: msgParts });
+      } else if (m.role === 'assistant' && m.text) {
+        // Trim long AI responses to keep payload small
+        const trimmedText = m.text.length > 600 ? m.text.slice(0, 600) + '...' : m.text;
+        historyForApi.push({ role: 'model', parts: [{ text: trimmedText }] });
       }
     });
 
-    // Current user turn parts (with optional attachment)
+    // Current user turn parts
     const currentTurnParts = [];
     if (textToSend) currentTurnParts.push({ text: textToSend });
     if (activeAttachment && activeAttachment.base64Data && activeAttachment.mimeType) {
@@ -1412,56 +1404,63 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
       currentTurnParts.push({ text: 'Please analyze this attachment and give me expert fitness coaching on it.' });
     }
 
-    // Full contents array: [system-as-first-user, ...history, current-user]
-    const systemFirstTurn = { role: 'user', parts: [{ text: systemPrompt }] };
-    const systemAck = { role: 'model', parts: [{ text: "Understood. I'm your V-FIT AI Coach and I'll help you with your fitness goals." }] };
+    // Full contents for Gemini: system context + trimmed history + current question
     const geminiContents = [
-      systemFirstTurn,
-      systemAck,
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: "Understood. I'm your V-FIT AI Coach." }] },
       ...historyForApi,
       { role: 'user', parts: currentTurnParts }
     ];
 
-    // Layer 1: Serverless /api/chat endpoint
-    try {
-      const serverRes = await fetch('/api/chat', {
+    // ── Fast parallel race: serverless vs direct Gemini, 6s timeout each ────────
+    const TIMEOUT_MS = 6000;
+    const withTimeout = (promise) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS))
+    ]);
+
+    const apiKey = (geminiApiKey || '').trim();
+    const callServerless = () => withTimeout(
+      fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: geminiContents })
-      });
-      if (serverRes.ok) {
-        const data = await serverRes.json();
-        if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-          replyText = data.candidates[0].content.parts[0].text;
-        }
-      }
-    } catch (err) {
-      console.warn("Serverless chat endpoint deferred:", err);
-    }
+      }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
+        .then(data => {
+          const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          return t || Promise.reject(new Error('no text'));
+        })
+    );
 
-    // Layer 2: Direct Gemini Multi-Model Cascading Fallback
-    if (!replyText) {
-      const apiKey = (geminiApiKey || '').trim();
-      const models = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
-      for (const model of models) {
+    const callDirect = () => withTimeout(
+      fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({ contents: geminiContents })
+      }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
+        .then(data => {
+          const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          return t || Promise.reject(new Error('no text'));
+        })
+    );
+
+    // Race both calls — whichever replies first wins
+    try {
+      replyText = await Promise.any([callServerless(), callDirect()]);
+    } catch (e) {
+      // Both failed or timed out — try one more fallback model
+      if (apiKey) {
         try {
-          const directRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify({ contents: geminiContents })
-          });
-          if (directRes.ok) {
-            const data = await directRes.json();
-            if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-              replyText = data.candidates[0].content.parts[0].text;
-              break;
-            }
-          }
-        } catch (e) {
-          console.warn(`Direct model ${model} chat error:`, e);
+          const fbRes = await withTimeout(
+            fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+              body: JSON.stringify({ contents: geminiContents })
+            }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
+          );
+          replyText = fbRes?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } catch (e2) {
+          console.warn('All Gemini calls failed:', e2.message);
         }
       }
     }

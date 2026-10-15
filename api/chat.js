@@ -32,14 +32,19 @@ export default async function handler(req, res) {
 
   for (const model of models) {
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-goog-api-key': apiKey.trim()
         },
-        body: JSON.stringify({ contents, systemInstruction })
+        body: JSON.stringify({ contents, systemInstruction }),
+        signal: controller.signal
       });
+      clearTimeout(timer);
 
       const data = await response.json();
       if (response.ok && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
