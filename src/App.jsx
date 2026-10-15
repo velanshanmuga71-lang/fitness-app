@@ -576,6 +576,43 @@ const renderFormattedAiText = (raw) => {
   );
 };
 
+
+// Model Registry for user switching (High quota vs Deep thinking vs Offline)
+const AI_MODELS = [
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    speed: 'Ultra Fast',
+    quota: '15 RPM Free Tier',
+    desc: 'High rate limit (15 req/min) • Best to avoid Google rate limit blocks',
+    badge: '15 RPM (High Quota)'
+  },
+  {
+    id: 'gemini-flash-latest',
+    name: 'Gemini 3.8 Flash',
+    speed: 'Deep & Balanced',
+    quota: '5 RPM Free Tier',
+    desc: 'Google AI Studio standard • 5 req/min free limit',
+    badge: '5 RPM (Standard)'
+  },
+  {
+    id: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
+    speed: 'Next-Gen Speed',
+    quota: '15 RPM Free Tier',
+    desc: 'Latest experimental multimodal engine',
+    badge: 'Fast'
+  },
+  {
+    id: 'smart-heuristic',
+    name: 'Sports Science Engine',
+    speed: 'Instant (0ms)',
+    quota: 'Unlimited',
+    desc: '100% Offline sports physiology heuristics • Never rate-limited',
+    badge: 'Unlimited'
+  }
+];
+
 const App = () => {
   const [view, setView] = useState('workout'); // 'workout' or 'dashboard'
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -989,6 +1026,34 @@ const App = () => {
     }
   });
   const [coachMode, setCoachMode] = useState(() => localStorage.getItem('vfit_coach_mode') || 'balanced');
+  const [selectedAiModel, setSelectedAiModel] = useState(() => localStorage.getItem('vfit_ai_model') || 'gemini-3.5-flash-lite');
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const activeAiAbortControllerRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('vfit_ai_model', selectedAiModel);
+  }, [selectedAiModel]);
+
+  const handleStopAiGeneration = () => {
+    if (activeAiAbortControllerRef.current) {
+      try {
+        activeAiAbortControllerRef.current.abort();
+      } catch (e) {}
+      activeAiAbortControllerRef.current = null;
+    }
+    setIsAiThinking(false);
+    setAiChatMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'user') {
+        return [...prev, {
+          role: 'assistant',
+          text: "⏹️ *Response stopped by user.* You can ask another question, retry, or switch models below.",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }];
+      }
+      return prev;
+    });
+  };
   const [previewLightboxImage, setPreviewLightboxImage] = useState(null);
 
   useEffect(() => {
@@ -1487,55 +1552,73 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
       { role: 'user', parts: currentTurnParts }
     ];
 
-    // ── Fast parallel race: serverless vs direct Gemini, 6s timeout each ────────
-    const TIMEOUT_MS = 6000;
-    const withTimeout = (promise) => Promise.race([
-      promise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS))
-    ]);
-
+    // ── Model Execution with AbortController & User-Selected Model ────────
+    const abortCtrl = new AbortController();
+    activeAiAbortControllerRef.current = abortCtrl;
     const apiKey = (geminiApiKey || '').trim();
-    const callServerless = () => withTimeout(
-      fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: geminiContents })
-      }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
-        .then(data => {
-          const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          return t || Promise.reject(new Error('no text'));
-        })
-    );
 
-    const callDirect = () => withTimeout(
-      fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents: geminiContents })
-      }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
-        .then(data => {
-          const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          return t || Promise.reject(new Error('no text'));
-        })
-    );
+    if (selectedAiModel !== 'smart-heuristic') {
+      const activeModelName = selectedAiModel || 'gemini-3.5-flash-lite';
+      const TIMEOUT_MS = 7500;
 
-    // Race both calls — whichever replies first wins
-    try {
-      replyText = await Promise.any([callServerless(), callDirect()]);
-    } catch (e) {
-      // Both failed or timed out — try one more fallback model
-      if (apiKey) {
-        try {
-          const fbRes = await withTimeout(
-            fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-              body: JSON.stringify({ contents: geminiContents })
-            }).then(r => r.ok ? r.json() : Promise.reject(new Error('not ok')))
-          );
-          replyText = fbRes?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        } catch (e2) {
-          console.warn('All Gemini calls failed:', e2.message);
+      const callServerless = () => {
+        return fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: geminiContents, model: activeModelName }),
+          signal: abortCtrl.signal
+        }).then(r => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
+          .then(data => {
+            const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            return t || Promise.reject(new Error('no text'));
+          });
+      };
+
+      const callDirect = () => {
+        return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModelName}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({ contents: geminiContents }),
+          signal: abortCtrl.signal
+        }).then(r => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
+          .then(data => {
+            const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            return t || Promise.reject(new Error('no text'));
+          });
+      };
+
+      const withTimeout = (p) => Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), TIMEOUT_MS))
+      ]);
+
+      try {
+        // Try serverless first, with direct fallback if API key exists
+        if (apiKey) {
+          replyText = await Promise.any([withTimeout(callServerless()), withTimeout(callDirect())]);
+        } else {
+          replyText = await withTimeout(callServerless());
+        }
+      } catch (err) {
+        if (abortCtrl.signal.aborted) {
+          console.log('User cancelled AI generation');
+          return;
+        }
+        console.warn(`Primary model ${activeModelName} deferred or rate limited:`, err.message);
+
+        // Resilient auto-fallback to Flash Lite (15 RPM) if we were on Flash 5 RPM
+        if (activeModelName !== 'gemini-3.5-flash-lite') {
+          try {
+            const fbRes = await withTimeout(
+              fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+                body: JSON.stringify({ contents: geminiContents }),
+                signal: abortCtrl.signal
+              }).then(r => r.ok ? r.json() : Promise.reject(new Error('fail')))
+            );
+            replyText = fbRes?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          } catch (e2) {}
         }
       }
     }
@@ -4412,6 +4495,60 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                 </div>
               )}
 
+              {/* Model Selector Bar (ChatGPT / Gemini style picker) */}
+              <div className="ai-model-toolbar">
+                <button
+                  type="button"
+                  className="btn-model-selector-pill"
+                  onClick={() => setShowModelDropdown(!showModelDropdown)}
+                  title="Switch AI Model & Quota"
+                >
+                  <Bot size={13} color="#818cf8" />
+                  <span className="model-pill-label">{(AI_MODELS.find(m => m.id === selectedAiModel) || AI_MODELS[0]).name}</span>
+                  <span className="model-pill-quota">{(AI_MODELS.find(m => m.id === selectedAiModel) || AI_MODELS[0]).quota.split(' ')[0]} RPM</span>
+                  <ChevronDown size={12} className={showModelDropdown ? 'model-chevron-up' : ''} />
+                </button>
+
+                {showModelDropdown && (
+                  <div className="ai-model-dropdown-backdrop" onClick={() => setShowModelDropdown(false)}>
+                    <div className="ai-model-dropdown-sheet" onClick={(e) => e.stopPropagation()}>
+                      <div className="model-dropdown-header">
+                        <span className="model-dropdown-title">SELECT AI MODEL</span>
+                        <button className="chatgpt-icon-btn" onClick={() => setShowModelDropdown(false)} style={{ width: 28, height: 28 }}>
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      <div className="model-options-list">
+                        {AI_MODELS.map(m => (
+                          <div
+                            key={m.id}
+                            className={`model-option-item ${selectedAiModel === m.id ? 'selected' : ''}`}
+                            onClick={() => {
+                              setSelectedAiModel(m.id);
+                              setShowModelDropdown(false);
+                            }}
+                          >
+                            <div className="model-meta-left">
+                              <div className="model-name-row">
+                                <span className="model-title">{m.name}</span>
+                                <span className={`model-badge ${m.id === 'gemini-3.5-flash-lite' ? 'recommended' : ''}`}>
+                                  {m.badge}
+                                </span>
+                              </div>
+                              <span className="model-desc">{m.desc}</span>
+                            </div>
+                            <div className="model-meta-right">
+                              {selectedAiModel === m.id && <CheckCircle2 size={16} color="#34d399" />}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Prompt Input Bar */}
               <div className="ai-input-bar">
                 <button
@@ -4419,7 +4556,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                   className="btn-input-tool"
                   onClick={() => fileInputRef.current?.click()}
                   title="Attach Photo, PDF, or Audio"
-                  disabled={isCompressingFile}
+                  disabled={isCompressingFile || isAiThinking}
                 >
                   <Paperclip size={18} />
                 </button>
@@ -4428,7 +4565,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                   className="btn-input-tool"
                   onClick={() => cameraInputRef.current?.click()}
                   title="Take Photo of Food or Gym Machine"
-                  disabled={isCompressingFile}
+                  disabled={isCompressingFile || isAiThinking}
                 >
                   <Camera size={18} />
                 </button>
@@ -4444,6 +4581,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                     }
                   }}
                   title="Toggle AI Image Generation"
+                  disabled={isAiThinking}
                 >
                   <ImageIcon size={18} />
                 </button>
@@ -4451,6 +4589,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                   type="text"
                   className="ai-input-field"
                   placeholder={
+                    isAiThinking ? "Coach is generating... tap Stop anytime" :
                     isListening ? "Listening to your voice..." :
                     selectedAttachment ? "Add a message or tap send..." :
                     coachMode === 'image' ? "Describe the meal, physique, or workout image to generate..." :
@@ -4461,23 +4600,39 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                   value={aiInputText}
                   onChange={e => setAiInputText(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSendAiMessage(); }}
+                  disabled={isAiThinking}
                 />
                 <button
                   type="button"
                   className={`btn-input-tool ${isListening ? 'active-mic' : ''}`}
                   onClick={toggleVoiceDictation}
                   title={isListening ? "Stop Listening" : "Speak your Question"}
+                  disabled={isAiThinking}
                 >
                   {isListening ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
-                <button
-                  className="btn-ai-send"
-                  disabled={isAiThinking || (!aiInputText.trim() && !selectedAttachment)}
-                  onClick={() => handleSendAiMessage()}
-                  title="Send to Coach"
-                >
-                  <Send size={18} />
-                </button>
+
+                {/* STOP / SEND Dynamic Button */}
+                {isAiThinking ? (
+                  <button
+                    type="button"
+                    className="btn-ai-send btn-ai-stop"
+                    onClick={handleStopAiGeneration}
+                    title="Stop AI Generation"
+                  >
+                    <Square size={13} style={{ fill: 'currentColor' }} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-ai-send"
+                    disabled={!aiInputText.trim() && !selectedAttachment}
+                    onClick={() => handleSendAiMessage()}
+                    title="Send to Coach"
+                  >
+                    <Send size={18} />
+                  </button>
+                )}
               </div>
             </motion.div>
           </>

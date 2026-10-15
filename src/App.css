@@ -6928,3 +6928,219 @@ body {
   color: #ffffff;
   transform: scale(1.08);
 }
+
+
+/* ==========================================================================
+   AI Model Selector Toolbar & Dynamic Stop Button Styles
+   ========================================================================== */
+
+/* Model Toolbar above Input Bar */
+.ai-model-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 1.25rem 0.4rem;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.btn-model-selector-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  padding: 0.28rem 0.65rem;
+  color: #e2e8f0;
+  font-size: 0.73rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.light-theme .btn-model-selector-pill {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #0f172a;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.btn-model-selector-pill:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.45);
+  transform: translateY(-1px);
+}
+
+.model-pill-label {
+  font-weight: 700;
+}
+
+.model-pill-quota {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  font-weight: 800;
+}
+
+.model-chevron-up {
+  transform: rotate(180deg);
+}
+
+/* Model Dropdown Sheet Modal */
+.ai-model-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.ai-model-dropdown-sheet {
+  background: #111118;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px 24px 0 0;
+  width: 100%;
+  max-width: 640px;
+  padding: 1.25rem 1.25rem 2.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+  animation: fadeSlideIn 0.22s ease-out;
+}
+
+.light-theme .ai-model-dropdown-sheet {
+  background: #ffffff;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.12);
+}
+
+.model-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.light-theme .model-dropdown-header {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.model-dropdown-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #818cf8;
+}
+
+.light-theme .model-dropdown-title {
+  color: #4f46e5;
+}
+
+.model-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.model-option-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.light-theme .model-option-item {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.model-option-item:hover {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.35);
+  transform: translateY(-1px);
+}
+
+.model-option-item.selected {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+}
+
+.model-meta-left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.light-theme .model-title {
+  color: #0f172a;
+}
+
+.model-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+
+.model-badge.recommended {
+  background: rgba(16, 185, 129, 0.18);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.model-desc {
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.light-theme .model-desc {
+  color: #64748b;
+}
+
+/* Dynamic Stop Button */
+.btn-ai-send.btn-ai-stop {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.45) !important;
+  animation: pulseStop 1.3s infinite ease-in-out;
+}
+
+@keyframes pulseStop {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.45);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.75);
+  }
+}

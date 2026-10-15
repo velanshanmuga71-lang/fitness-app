@@ -26,8 +26,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing contents in request body' });
   }
 
-  // Multi-model resilient fallback
-  const models = ['gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
+  // Multi-model resilient fallback with user-selected model priority
+  const requestedModel = req.body.model || 'gemini-3.5-flash-lite';
+  const candidateModels = [
+    requestedModel,
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-2.0-flash-exp',
+    'gemini-flash-lite-latest'
+  ];
+  const models = [...new Set(candidateModels)];
   let lastError = null;
 
   for (const model of models) {
