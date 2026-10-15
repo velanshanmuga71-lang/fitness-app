@@ -988,6 +988,17 @@ const App = () => {
     }
   });
   const [aiInputText, setAiInputText] = useState('');
+  const [showClearChatConfirm, setShowClearChatConfirm] = useState(false);
+  const handleClearChat = () => {
+    const initialMsg = [{
+      role: 'assistant',
+      text: "Hey! I'm your V-FIT AI Coach. Chat cleared — fresh start! Ask me anything about your training, nutrition, or recovery.",
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }];
+    setAiChatMessages(initialMsg);
+    localStorage.setItem('vfit_ai_chat', JSON.stringify(initialMsg));
+    setShowClearChatConfirm(false);
+  };
   const [isAiThinking, setIsAiThinking] = useState(false);
   const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '').trim();
 
@@ -1361,23 +1372,62 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
 
     let replyText = '';
 
-    // Build multimodal parts
-    const parts = [{ text: `${systemPrompt}\n\nAthlete Question: ${textToSend || 'Please analyze this attachment and give me expert fitness coaching on it.'}` }];
+    // ── Build conversation history for multi-turn memory ──────────────────────
+    // We send the system context as the very first user turn (Gemini requirement),
+    // then replay the last N exchanges (max 8 pairs = 16 messages), and finally
+    // append the current user question. This gives the model full conversation memory.
+    const MAX_HISTORY_PAIRS = 8;
+    const historyForApi = [];
+
+    // Prior exchange messages (exclude the brand-new userMsg we just pushed)
+    const priorMessages = newHistory.slice(0, -1); // all but the last (current user msg)
+    // Take only the last MAX_HISTORY_PAIRS*2 messages (pairs of user+assistant)
+    const trimmedHistory = priorMessages.slice(-(MAX_HISTORY_PAIRS * 2));
+
+    // Convert stored chat messages into Gemini multi-turn format
+    trimmedHistory.forEach(m => {
+      if (m.role === 'user') {
+        const msgParts = [];
+        if (m.text) msgParts.push({ text: m.text });
+        historyForApi.push({ role: 'user', parts: msgParts.length > 0 ? msgParts : [{ text: '...' }] });
+      } else if (m.role === 'assistant') {
+        if (m.text) {
+          historyForApi.push({ role: 'model', parts: [{ text: m.text }] });
+        }
+      }
+    });
+
+    // Current user turn parts (with optional attachment)
+    const currentTurnParts = [];
+    if (textToSend) currentTurnParts.push({ text: textToSend });
     if (activeAttachment && activeAttachment.base64Data && activeAttachment.mimeType) {
-      parts.push({
+      currentTurnParts.push({
         inlineData: {
           mimeType: activeAttachment.mimeType,
           data: activeAttachment.base64Data
         }
       });
     }
+    if (currentTurnParts.length === 0) {
+      currentTurnParts.push({ text: 'Please analyze this attachment and give me expert fitness coaching on it.' });
+    }
+
+    // Full contents array: [system-as-first-user, ...history, current-user]
+    const systemFirstTurn = { role: 'user', parts: [{ text: systemPrompt }] };
+    const systemAck = { role: 'model', parts: [{ text: "Understood. I'm your V-FIT AI Coach and I'll help you with your fitness goals." }] };
+    const geminiContents = [
+      systemFirstTurn,
+      systemAck,
+      ...historyForApi,
+      { role: 'user', parts: currentTurnParts }
+    ];
 
     // Layer 1: Serverless /api/chat endpoint
     try {
       const serverRes = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ role: 'user', parts }] })
+        body: JSON.stringify({ contents: geminiContents })
       });
       if (serverRes.ok) {
         const data = await serverRes.json();
@@ -1401,7 +1451,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
               'Content-Type': 'application/json',
               'x-goog-api-key': apiKey
             },
-            body: JSON.stringify({ contents: [{ role: 'user', parts }] })
+            body: JSON.stringify({ contents: geminiContents })
           });
           if (directRes.ok) {
             const data = await directRes.json();
@@ -3834,6 +3884,14 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
 
                 <div className="ai-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <button
+                    className="ai-btn-icon"
+                    onClick={() => setShowClearChatConfirm(true)}
+                    title="Clear conversation history"
+                    style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.03em', padding: '0.3rem 0.7rem', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}
+                  >
+                    Clear
+                  </button>
+                  <button
                     className={`btn-live-voice-call ${isLiveVoiceActive ? 'active' : ''}`}
                     onClick={() => isLiveVoiceActive ? stopLiveVoiceSession() : startLiveVoiceSession()}
                     title={isLiveVoiceActive ? "End Live Voice Session" : "Start Live Voice Call"}
@@ -4199,6 +4257,28 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
           </>
         )}
       </AnimatePresence>
+
+      {/* Clear Chat Confirmation Mini-Modal */}
+      {showClearChatConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 999999,
+          background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end',
+          justifyContent: 'center'
+        }} onClick={() => setShowClearChatConfirm(false)}>
+          <div style={{
+            background: '#111117', borderRadius: '24px 24px 0 0', padding: '1.75rem 1.5rem 2.5rem',
+            width: '100%', maxWidth: '640px', border: '1px solid rgba(255,255,255,0.1)',
+            display: 'flex', flexDirection: 'column', gap: '1rem'
+          }} onClick={e => e.stopPropagation()}>
+            <p style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', textAlign: 'center' }}>Clear conversation?</p>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center' }}>This removes all chat history. Your profile and workouts are not affected.</p>
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button onClick={() => setShowClearChatConfirm(false)} style={{ flex: 1, padding: '0.85rem', borderRadius: '14px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}>Cancel</button>
+              <button onClick={handleClearChat} style={{ flex: 1, padding: '0.85rem', borderRadius: '14px', background: 'linear-gradient(135deg, #ef4444, #dc2626)', border: 'none', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}>Clear</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Progressive Overload Log Modal */}
       <AnimatePresence>
