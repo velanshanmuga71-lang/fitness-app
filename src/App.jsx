@@ -1015,6 +1015,31 @@ const App = () => {
   const [isCompressingFile, setIsCompressingFile] = useState(false);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const chatMessagesEndRef = useRef(null);
+
+  const scrollToChatBottom = (behavior = 'smooth') => {
+    if (chatMessagesEndRef.current) {
+      chatMessagesEndRef.current.scrollIntoView({ behavior, block: 'end' });
+    }
+  };
+
+  useEffect(() => {
+    if (showAiCoach) {
+      const timer = setTimeout(() => {
+        scrollToChatBottom('auto');
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [showAiCoach]);
+
+  useEffect(() => {
+    if (showAiCoach) {
+      const timer = setTimeout(() => {
+        scrollToChatBottom('smooth');
+      }, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [aiChatMessages, isAiThinking]);
 
   // Voice dictation & ChatGPT-style Live Voice states
   const [isListening, setIsListening] = useState(false);
@@ -1350,6 +1375,7 @@ const App = () => {
     setAiInputText('');
     setSelectedAttachment(null);
     setIsAiThinking(true);
+    setTimeout(() => scrollToChatBottom('smooth'), 50);
 
     const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
     const isLiveConvo = isVoiceMode || liveVoiceActiveRef.current;
@@ -4339,6 +4365,7 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                     </div>
                   </div>
                 )}
+                <div ref={chatMessagesEndRef} style={{ height: '24px', flexShrink: 0 }} />
               </div>
 
               {/* Quick Action Suggestion Chips */}
