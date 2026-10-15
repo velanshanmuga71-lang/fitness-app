@@ -59,7 +59,8 @@ import {
   PhoneOff,
   Radio,
   Play,
-  Pause
+  Pause,
+  Image as ImageIcon
 } from 'lucide-react';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -987,6 +988,13 @@ const App = () => {
       return [];
     }
   });
+  const [coachMode, setCoachMode] = useState(() => localStorage.getItem('vfit_coach_mode') || 'balanced');
+  const [previewLightboxImage, setPreviewLightboxImage] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('vfit_coach_mode', coachMode);
+  }, [coachMode]);
+
   const [aiInputText, setAiInputText] = useState('');
   const [showClearChatConfirm, setShowClearChatConfirm] = useState(false);
   const handleClearChat = () => {
@@ -1345,9 +1353,46 @@ const App = () => {
 
     const currentExNames = currentWorkout.exercises ? currentWorkout.exercises.map(e => e.name).join(', ') : 'Rest Day';
     const isLiveConvo = isVoiceMode || liveVoiceActiveRef.current;
+
+    let modeInstruction = "";
+    if (coachMode === 'harder') {
+      modeInstruction = `
+COACHING INTENSITY: 🔥 HARDER / SAVAGE DRILL-SERGEANT MODE (ZERO COMPLACENCY)
+- Demeanor: Uncompromising, relentless, and fierce. Zero tolerance for excuses, skipping sets, or complacency.
+- Intensity: Push the athlete to true RPE 9.5-10, emphasize progressive overload, drop sets, pause reps, and brutal mental fortitude.
+- Tone: High-energy, commanding, gritty, and fiercely motivating (e.g. "Lock in right now", "Excuses don't build muscle", "Earn every gram of progress").
+- Challenge: Demand they lift heavier, hold longer, or execute with cleaner, stricter form.`;
+    } else if (coachMode === 'deeper') {
+      modeInstruction = `
+COACHING INTENSITY: 🔬 DEEPER / ADVANCED BIOMECHANICS & SPORTS PHYSIOLOGY MODE
+- Demeanor: Master exercise physiologist, kinesiologist, and sports scientist.
+- Depth Level: EXTREMELY IN-DEPTH and rigorous. Avoid basic surface-level tips.
+- Scope: Explain exact internal vs external moment arms, active/passive muscle insufficiency, sarcomere elongation, motor unit recruitment thresholds (Henneman's size principle), mTORC1 phosphorylation, metabolic waste clearance, eccentric-isometric-concentric tempo prescriptions (e.g. 3-1-1-0), and amino acid partition ratios.
+- Rationale: Detail the precise kinetic chain, joint angles, and physiological 'why' behind every recommendation.`;
+    } else if (coachMode === 'quick') {
+      modeInstruction = `
+COACHING INTENSITY: ⚡ QUICK CUES MODE (BETWEEN WORKING SETS)
+- Demeanor: Fast, punchy corner coach.
+- Format: Exactly 2 to 3 rapid, actionable bullet points.
+- Maximum Length: 35 words total so the athlete can read it during a 30-second rest interval.`;
+    } else if (coachMode === 'image') {
+      modeInstruction = `
+COACHING INTENSITY: 🎨 AI VISUAL ARTIST & IMAGE GENERATOR MODE
+- You specialize in generating vivid, photorealistic visual prompts for fitness, bodybuilding physiques, healthy recipes/plates, gym machines, and biomechanical exercise diagrams.
+- Always include an image generation command tag: [GENERATE_IMAGE: detailed photorealistic prompt in English].
+- Accompany the image with 2-3 motivating coaching insights.`;
+    }
+
+    const imageCapabilityRule = `
+IMAGE GENERATION CAPABILITY:
+When the athlete asks to visualize, generate, draw, or see an image of a meal, food plate, gym machine, exercise form, or physique, or when in Image Gen mode, you MUST include:
+[GENERATE_IMAGE: detailed photorealistic prompt in English].
+The app will automatically render and display the high-resolution AI image directly in the chat!`;
+
     const systemPrompt = isLiveConvo
       ? `You are V-FIT AI Coach in a real-time live phone call with ${userProfile.name || 'Athlete'} (ChatGPT Voice Mode).
 Athlete Profile: ${currentWeight}kg -> Target ${userProfile.goalWeight || 85}kg (${userProfile.goalType || 'Lean Bulk'}), Today's Workout: ${currentWorkout.name}.
+${modeInstruction}
 VOICE CONVERSATION RULES:
 1. Respond in 1 to 2 spoken sentences ONLY (maximum 30 words).
 2. Talk naturally with human enthusiasm like a supportive personal coach talking on the phone.
@@ -1363,8 +1408,12 @@ Athlete Profile:
 - Today's Workout: ${currentWorkout.name} (Exercises: ${currentExNames})
 - Dynamic Targets: ${TARGET_KCAL} kcal daily (${TARGET_PRO}g Protein, ${TARGET_CARB}g Carbs, ${TARGET_FAT}g Fat)
 
+${modeInstruction}
+
+${imageCapabilityRule}
+
 Instructions:
-Provide clear, actionable, science-backed guidance.
+Provide clear, actionable, science-backed guidance matching the active Coaching Intensity mode.
 If an image of food/meal is attached: analyze the plate, estimate Calories, Protein, Carbs, and Fats, and offer dietary tips.
 If an image of gym equipment/machine is attached: explain how to set it up, target muscle groups, and correct execution cues.
 If a document or PDF is attached: summarize key findings and provide tailored athletic adjustments.
@@ -1509,7 +1558,44 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
       }
     }
 
-    const updated = [...newHistory, { role: 'assistant', text: replyText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
+    // Extract image generation commands or detect image requests
+    let generatedImage = null;
+    const imgTagMatch = replyText.match(/\[GENERATE_IMAGE:\s*([^\]]+)\]/i);
+    const isExplicitImageReq = coachMode === 'image' || /(?:generate|create|show me|draw|make)\s+(?:an?\s+)?(?:image|picture|photo|visual)/i.test(textToSend);
+
+    if (imgTagMatch) {
+      const promptDesc = imgTagMatch[1].trim();
+      replyText = replyText.replace(/\[GENERATE_IMAGE:\s*[^\]]+\]/i, '').trim();
+      const seed = Math.floor(Math.random() * 1000000);
+      generatedImage = {
+        prompt: promptDesc,
+        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(promptDesc + ', 4k, ultra detailed, cinematic lighting')}?width=1024&height=1024&model=flux&nologo=true&seed=${seed}`
+      };
+    } else if (isExplicitImageReq && textToSend) {
+      const cleanPrompt = textToSend
+        .replace(/generate|create|show me|give me|draw|make|an?|image|picture|photo|visual|of/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const promptDesc = cleanPrompt.length > 2 ? cleanPrompt : textToSend;
+      const seed = Math.floor(Math.random() * 1000000);
+      generatedImage = {
+        prompt: promptDesc,
+        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(promptDesc + ', fitness bodybuilding physique or healthy sports nutrition meal, cinematic lighting, 4k, photorealistic')}?width=1024&height=1024&model=flux&nologo=true&seed=${seed}`
+      };
+      if (!replyText) {
+        replyText = `🎨 **Visual Generated:** Here is your requested visualization for **"${promptDesc}"**!\n\n• Tap the image to expand in full size or download it.\n• Let me know if you want adjustments to the ingredients, lighting, or exercise form!`;
+      }
+    }
+
+    const assistantMsg = {
+      role: 'assistant',
+      text: replyText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      mode: coachMode,
+      generatedImage: generatedImage
+    };
+
+    const updated = [...newHistory, assistantMsg];
     setAiChatMessages(updated);
     localStorage.setItem('vfit_ai_chat', JSON.stringify(updated));
     setIsAiThinking(false);
@@ -4097,6 +4183,64 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                 <span className="ai-context-tag">💪 Phase {currentPhase.id}</span>
               </div>
 
+              {/* AI Intelligence Mode & Depth Selector */}
+              <div className="ai-mode-selector-bar">
+                <div className="ai-mode-scroll">
+                  <button
+                    type="button"
+                    className={`ai-mode-pill ${coachMode === 'balanced' ? 'active' : ''}`}
+                    onClick={() => setCoachMode('balanced')}
+                    title="Standard supportive, science-backed guidance"
+                  >
+                    <Target size={12} />
+                    <span>Standard</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ai-mode-pill harder ${coachMode === 'harder' ? 'active' : ''}`}
+                    onClick={() => setCoachMode('harder')}
+                    title="Zero-excuses, intense drill-sergeant push (Harder)"
+                  >
+                    <Flame size={12} />
+                    <span>🔥 Harder</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ai-mode-pill deeper ${coachMode === 'deeper' ? 'active' : ''}`}
+                    onClick={() => setCoachMode('deeper')}
+                    title="In-depth biomechanics & sports science (Deeper)"
+                  >
+                    <Zap size={12} />
+                    <span>🔬 Deeper</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ai-mode-pill quick ${coachMode === 'quick' ? 'active' : ''}`}
+                    onClick={() => setCoachMode('quick')}
+                    title="Fast, ultra-concise coaching cues between sets"
+                  >
+                    <Clock size={12} />
+                    <span>⚡ Quick</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ai-mode-pill image-gen ${coachMode === 'image' ? 'active' : ''}`}
+                    onClick={() => {
+                      if (coachMode === 'image') {
+                        setCoachMode('balanced');
+                      } else {
+                        setCoachMode('image');
+                        if (!aiInputText.trim()) setAiInputText("Generate an image of ");
+                      }
+                    }}
+                    title="AI Visual Image Generation"
+                  >
+                    <Sparkles size={12} />
+                    <span>🎨 Image Gen</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Chat Message Stream */}
               <div className="ai-chat-messages">
                 {aiChatMessages.map((msg, i) => (
@@ -4131,6 +4275,10 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                           <div className="ai-assistant-title">
                             <Sparkles size={13} color="#a5b4fc" />
                             <span>AI Coach</span>
+                            {msg.mode === 'harder' && <span className="ai-mode-badge-inline harder">🔥 Harder</span>}
+                            {msg.mode === 'deeper' && <span className="ai-mode-badge-inline deeper">🔬 Deeper</span>}
+                            {msg.mode === 'quick' && <span className="ai-mode-badge-inline quick">⚡ Quick</span>}
+                            {msg.mode === 'image' && <span className="ai-mode-badge-inline image">🎨 Visual AI</span>}
                           </div>
                           <div className="ai-assistant-tools">
                             <span className="ai-msg-time">{msg.timestamp}</span>
@@ -4144,6 +4292,36 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                           </div>
                         </div>
                         {renderFormattedAiText(msg.text)}
+                        {msg.generatedImage && (
+                          <div className="ai-generated-visual-card">
+                            <div className="visual-card-image-wrap" onClick={() => setPreviewLightboxImage(msg.generatedImage.url)}>
+                              <img
+                                src={msg.generatedImage.url}
+                                alt={msg.generatedImage.prompt}
+                                loading="lazy"
+                                className="visual-generated-img"
+                              />
+                              <div className="visual-card-overlay">
+                                <span className="visual-badge">🎨 AI Visual • Flux</span>
+                                <span className="visual-zoom-hint">Tap to expand</span>
+                              </div>
+                            </div>
+                            <div className="visual-card-footer">
+                              <span className="visual-prompt-text">“{msg.generatedImage.prompt}”</span>
+                              <a
+                                href={msg.generatedImage.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                download="vfit-visual.jpg"
+                                className="btn-visual-download"
+                                onClick={(e) => e.stopPropagation()}
+                                title="Download image"
+                              >
+                                <Download size={13} />
+                              </a>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -4227,10 +4405,32 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
                 >
                   <Camera size={18} />
                 </button>
+                <button
+                  type="button"
+                  className={`btn-input-tool ${coachMode === 'image' ? 'active-img-btn' : ''}`}
+                  onClick={() => {
+                    if (coachMode === 'image') {
+                      setCoachMode('balanced');
+                    } else {
+                      setCoachMode('image');
+                      if (!aiInputText.trim()) setAiInputText("Generate an image of ");
+                    }
+                  }}
+                  title="Toggle AI Image Generation"
+                >
+                  <ImageIcon size={18} />
+                </button>
                 <input
                   type="text"
                   className="ai-input-field"
-                  placeholder={isListening ? "Listening to your voice..." : selectedAttachment ? "Add a message or tap send..." : "Ask coach, snap food, or upload PDF..."}
+                  placeholder={
+                    isListening ? "Listening to your voice..." :
+                    selectedAttachment ? "Add a message or tap send..." :
+                    coachMode === 'image' ? "Describe the meal, physique, or workout image to generate..." :
+                    coachMode === 'harder' ? "Ask the Hardcore Drill Sergeant..." :
+                    coachMode === 'deeper' ? "Ask for in-depth biomechanics & physiological analysis..." :
+                    "Ask coach, snap food, or generate image..."
+                  }
                   value={aiInputText}
                   onChange={e => setAiInputText(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSendAiMessage(); }}
@@ -4256,6 +4456,53 @@ Format responses with short bullet points (•) and bold text (**bold**). Keep r
           </>
         )}
       </AnimatePresence>
+
+      {/* Image Lightbox Preview Modal */}
+      {previewLightboxImage && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999999,
+          background: 'rgba(0,0,0,0.92)', display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', padding: '1rem'
+        }} onClick={() => setPreviewLightboxImage(null)}>
+          <button
+            onClick={() => setPreviewLightboxImage(null)}
+            style={{
+              position: 'absolute', top: '1.25rem', right: '1.25rem',
+              background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
+              width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', cursor: 'pointer'
+            }}
+          >
+            <X size={24} />
+          </button>
+          <img
+            src={previewLightboxImage}
+            alt="AI Visual Preview"
+            style={{
+              maxWidth: '92vw', maxHeight: '75vh', borderRadius: '16px',
+              objectFit: 'contain', boxShadow: '0 10px 40px rgba(0,0,0,0.7)'
+            }}
+            onClick={e => e.stopPropagation()}
+          />
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem' }} onClick={e => e.stopPropagation()}>
+            <a
+              href={previewLightboxImage}
+              target="_blank"
+              rel="noopener noreferrer"
+              download="vfit-ai-visual.jpg"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '8px',
+                padding: '0.75rem 1.5rem', background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+                color: '#fff', borderRadius: '12px', fontWeight: 700, textDecoration: 'none',
+                fontSize: '0.9rem'
+              }}
+            >
+              <Download size={16} />
+              <span>Download Image</span>
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Clear Chat Confirmation Mini-Modal */}
       {showClearChatConfirm && (
